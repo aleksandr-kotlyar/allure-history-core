@@ -1,5 +1,5 @@
-import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
 import gitlab_adapter
 
@@ -75,38 +75,22 @@ def test_build_report_uses_gitlab_environment_contract(tmp_path, monkeypatch):
 
 
 def run_prepare_pages_worktree(tmp_path, monkeypatch, branch_status):
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    fake_git = bin_dir / "git"
-    fake_git.write_text(
-        textwrap.dedent(
-            """\
-            #!/bin/sh
-            printf '%s\n' "$*" >> "$GIT_COMMANDS"
+    commands: list[str] = []
 
-            if [ "$1" = "ls-remote" ]; then
-              exit "$BRANCH_STATUS"
-            fi
-
-            if [ "$1" = "init" ]; then
-              mkdir -p "$2"
-            fi
-            """
-        ),
-        encoding="utf-8",
-    )
-    fake_git.chmod(0o755)
-    commands_file = tmp_path / "git-commands"
+    def fake_git(*args, cwd=None, check=True):
+        del cwd, check
+        commands.append(" ".join(args))
+        if args[:3] == ("ls-remote", "--exit-code", "--heads"):
+            return SimpleNamespace(returncode=branch_status)
+        return SimpleNamespace(returncode=0)
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("PATH", f"{bin_dir}:{Path('/usr/bin')}:{Path('/bin')}")
-    monkeypatch.setenv("GIT_COMMANDS", str(commands_file))
-    monkeypatch.setenv("BRANCH_STATUS", str(branch_status))
     monkeypatch.setenv("CI_REPOSITORY_URL", "https://gitlab.example/group/project.git")
     monkeypatch.setenv("PAGES_BRANCH", "gl-pages")
+    monkeypatch.setattr(gitlab_adapter, "ensure_git_available", lambda: None)
+    monkeypatch.setattr(gitlab_adapter, "git", fake_git)
 
     result = gitlab_adapter.main(["prepare-pages-worktree"])
-    commands = commands_file.read_text(encoding="utf-8").splitlines()
     return result, commands
 
 
@@ -159,40 +143,34 @@ def run_publish_pages_worktree(
     successful_push,
     remote_branch_exists=True,
 ):
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    fake_git = bin_dir / "git"
-    fake_git.write_text(
-        textwrap.dedent(
-            """\
-            #!/bin/sh
-            printf '%s\n' "$*" >> "$GIT_COMMANDS"
-            command="$3"
+    calls: list[str] = []
+    commands: list[str] = []
+    push_count = 0
 
-            case "$command" in
-              diff)
-                exit 1
-                ;;
-              ls-remote)
-                [ "$REMOTE_BRANCH_EXISTS" = "true" ] || exit 2
-                ;;
-              pull)
-                printf 'pull\n' >> "$GIT_CALLS"
-                ;;
-              push)
-                printf 'push\n' >> "$GIT_CALLS"
-                push_count=$(grep -c '^push$' "$GIT_CALLS")
-                [ "$SUCCESSFUL_PUSH" -gt 0 ] && [ "$push_count" -ge "$SUCCESSFUL_PUSH" ]
-                ;;
-            esac
-            """
-        ),
-        encoding="utf-8",
-    )
-    fake_git.chmod(0o755)
-    fake_sleep = bin_dir / "sleep"
-    fake_sleep.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    fake_sleep.chmod(0o755)
+    def fake_git(*args, cwd=None, check=True):
+        nonlocal push_count
+        del cwd, check
+        commands.append(" ".join(args))
+
+        if len(args) >= 3 and args[2] == "diff":
+            return SimpleNamespace(returncode=1)
+        if len(args) >= 3 and args[2] == "ls-remote":
+            return SimpleNamespace(returncode=0 if remote_branch_exists else 2)
+        if len(args) >= 3 and args[2] == "pull":
+            calls.append("pull")
+            return SimpleNamespace(returncode=0)
+        if len(args) >= 3 and args[2] == "push":
+            calls.append("push")
+            push_count += 1
+            return SimpleNamespace(returncode=0 if successful_push > 0 and push_count >= successful_push else 1)
+
+        return SimpleNamespace(returncode=0)
+
+    def fake_run(command, **kwargs):
+        del kwargs
+        if command == ["sleep", "2"]:
+            return SimpleNamespace(returncode=0)
+        raise AssertionError(f"Unexpected run_command call: {command}")
 
     pages_public = tmp_path / "pages-worktree" / "public"
     pages_public.mkdir(parents=True)
@@ -201,37 +179,29 @@ def run_publish_pages_worktree(
         "pages:\n  script: echo legacy\n",
         encoding="utf-8",
     )
-    calls_file = tmp_path / "git-calls"
-    commands_file = tmp_path / "git-commands"
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("PATH", f"{bin_dir}:{Path('/usr/bin')}:{Path('/bin')}")
-    monkeypatch.setenv("GIT_CALLS", str(calls_file))
-    monkeypatch.setenv("GIT_COMMANDS", str(commands_file))
-    monkeypatch.setenv("SUCCESSFUL_PUSH", str(successful_push))
-    monkeypatch.setenv(
-        "REMOTE_BRANCH_EXISTS",
-        "true" if remote_branch_exists else "false",
-    )
     monkeypatch.setenv("GIT_PUSH_TOKEN", "secret")
     monkeypatch.setenv("CI_SERVER_HOST", "gitlab.example")
     monkeypatch.setenv("CI_PROJECT_PATH", "group/project")
     monkeypatch.setenv("CI_PIPELINE_ID", "123")
     monkeypatch.setenv("PAGES_BRANCH", "gl-pages")
+    monkeypatch.setattr(gitlab_adapter, "git", fake_git)
+    monkeypatch.setattr(gitlab_adapter, "run_command", fake_run)
 
     result = gitlab_adapter.main(["publish-pages-worktree"])
-    return result, calls_file, commands_file
+    return result, calls, commands
 
 
 def test_publish_pages_worktree_retries_after_racing_updates(tmp_path, monkeypatch):
-    result, calls_file, commands_file = run_publish_pages_worktree(
+    result, calls, commands = run_publish_pages_worktree(
         tmp_path,
         monkeypatch,
         successful_push=3,
     )
 
     assert result == 0
-    assert calls_file.read_text(encoding="utf-8").splitlines() == [
+    assert calls == [
         "pull",
         "push",
         "pull",
@@ -242,7 +212,6 @@ def test_publish_pages_worktree_retries_after_racing_updates(tmp_path, monkeypat
     assert (tmp_path / "public" / "index.html").read_text(encoding="utf-8") == "report"
     assert not (tmp_path / "pages-worktree" / ".gitlab-ci.yml").exists()
 
-    commands = commands_file.read_text(encoding="utf-8").splitlines()
     assert any(
         command.endswith(
             "commit -m Publish Allure report for pipeline 123 [skip ci]"
@@ -256,7 +225,7 @@ def test_publish_pages_worktree_retries_after_racing_updates(tmp_path, monkeypat
 
 
 def test_publish_pages_worktree_skips_pull_for_first_push(tmp_path, monkeypatch):
-    result, calls_file, _ = run_publish_pages_worktree(
+    result, calls, _ = run_publish_pages_worktree(
         tmp_path,
         monkeypatch,
         successful_push=1,
@@ -264,7 +233,7 @@ def test_publish_pages_worktree_skips_pull_for_first_push(tmp_path, monkeypatch)
     )
 
     assert result == 0
-    assert calls_file.read_text(encoding="utf-8").splitlines() == ["push"]
+    assert calls == ["push"]
     assert (tmp_path / "public" / "index.html").is_file()
 
 
