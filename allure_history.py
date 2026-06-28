@@ -106,6 +106,7 @@ def configure_branding(args: argparse.Namespace) -> None:
         "ALLURE_HISTORY_GENERATOR_NAME": args.generator_name,
         "ALLURE_HISTORY_GENERATOR_URL": args.generator_url,
         "ALLURE_HISTORY_VERSION": args.generator_version,
+        "ALLURE_HISTORY_VERSION_URL": args.generator_version_url,
     }
     os.environ.update({key: value for key, value in values.items() if value is not None})
 
@@ -261,6 +262,7 @@ def parser() -> argparse.ArgumentParser:
         default="https://github.com/aleksandr-kotlyar/core-allure-history",
     )
     build.add_argument("--generator-version", default="")
+    build.add_argument("--generator-version-url", default="")
     build.add_argument("--output-file")
     build.set_defaults(handler=build_report)
 

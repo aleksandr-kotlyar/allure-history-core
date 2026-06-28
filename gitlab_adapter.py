@@ -67,11 +67,123 @@ def modified_at() -> str:
     )
 
 
+def image_tag() -> str:
+    return (
+        os.environ.get("ALLURE_HISTORY_IMAGE_TAG", "").strip()
+        or os.environ.get("COMPONENT_VERSION", "").strip()
+        or os.environ.get("COMPONENT_REFERENCE", "").strip()
+    )
+
+
 def component_version() -> str:
     return (
-        os.environ.get("COMPONENT_VERSION", "").strip()
+        os.environ.get("GITLAB_ALLURE_HISTORY_VERSION", "").strip()
+        or os.environ.get("ALLURE_HISTORY_GENERATOR_VERSION", "").strip()
+        or image_tag()
+        or os.environ.get("COMPONENT_VERSION", "").strip()
         or os.environ.get("COMPONENT_REFERENCE", "").strip()
         or "unknown"
+    )
+
+
+def require_command(command: str, message: str) -> None:
+    if shutil.which(command):
+        return
+    raise RuntimeError(message)
+
+
+def validate_runtime_commands() -> None:
+    require_command(
+        "python3",
+        "Missing python3 in the core runtime image. "
+        "Use the default core image or provide python3 in your custom image.",
+    )
+    require_command(
+        "allure-history",
+        "Missing allure-history command in the core runtime image. "
+        "Use the default core image or provide the wrapper entrypoint in your custom image.",
+    )
+    require_command(
+        "allure",
+        "Missing allure command in the core runtime image. "
+        "Use the default core image or provide Allure commandline in your custom image.",
+    )
+
+
+def validate_image_tag_if_configured() -> None:
+    if "ALLURE_HISTORY_IMAGE_TAG" not in os.environ:
+        return
+
+    if os.environ.get("ALLURE_HISTORY_IMAGE_TAG", "").strip():
+        return
+
+    raise RuntimeError(
+        "ALLURE_HISTORY_IMAGE_TAG is empty. Provide a tagged component reference "
+        "(for example @2026.x.y), or set the runtime image tag explicitly."
+    )
+
+
+def ensure_publish_runtime_available() -> None:
+    ensure_git_available()
+    validate_runtime_commands()
+    validate_image_tag_if_configured()
+
+
+def output_file_path() -> Path:
+    return Path(env_or("ALLURE_HISTORY_OUTPUT_FILE", str(OUTPUT_FILE)))
+
+
+def results_dir_path() -> Path:
+    return Path(env_or("ALLURE_HISTORY_RESULTS_DIR", str(RESULTS_DIR)))
+
+
+def public_dir_path() -> Path:
+    return Path(env_or("ALLURE_HISTORY_PUBLIC_DIR", str(PAGES_PUBLIC_DIR)))
+
+
+def dependencies_dir() -> Path:
+    return Path(env_or("ALLURE_HISTORY_DEPENDENCIES_DIR", "."))
+
+
+def copy_dependency_artifacts(job_names: tuple[str, ...]) -> None:
+    base_dir = dependencies_dir()
+    copied = False
+
+    for job_name in job_names:
+        source = base_dir / job_name / "allure-results"
+        if not source.is_dir():
+            continue
+        destination = results_dir_path()
+        destination.mkdir(parents=True, exist_ok=True)
+        for entry in source.iterdir():
+            target = destination / entry.name
+            if target.exists():
+                if target.is_dir():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+            if entry.is_dir():
+                shutil.copytree(entry, target)
+            else:
+                shutil.copy2(entry, target)
+        copied = True
+
+    if copied:
+        print("Copied combined allure-results from dependency artifacts.")
+
+
+def ensure_results_present() -> None:
+    results_dir = results_dir_path()
+    if results_dir.is_dir() and any(results_dir.iterdir()):
+        return
+
+    copy_dependency_artifacts(("test_gate", "test_demo", "consumer_contract"))
+    if results_dir.is_dir() and any(results_dir.iterdir()):
+        return
+
+    raise RuntimeError(
+        "Missing Allure results. At least one earlier job must upload "
+        "allure-results/ as an artifact."
     )
 
 
@@ -152,10 +264,12 @@ def prepare_pages_worktree() -> None:
 
 
 def build_report() -> None:
+    validate_runtime_commands()
     jid = job_id()
     env_name = report_env()
     branch = report_branch()
     stamp = modified_at()
+    ensure_results_present()
 
     print(
         f"Building Allure report for environment '{env_name}', branch '{branch}', job '{jid}'."
@@ -165,9 +279,9 @@ def build_report() -> None:
             "allure-history",
             "build-report",
             "--results-dir",
-            str(RESULTS_DIR),
+            str(results_dir_path()),
             "--public-dir",
-            str(PAGES_PUBLIC_DIR),
+            str(public_dir_path()),
             "--environment",
             env_name,
             "--branch",
@@ -200,8 +314,10 @@ def build_report() -> None:
             "https://gitlab.com/aleksandr-kotlyar/gitlab-allure-history",
             "--generator-version",
             component_version(),
+            "--generator-version-url",
+            "https://gitlab.com/explore/catalog/aleksandr-kotlyar/gitlab-allure-history",
             "--output-file",
-            str(OUTPUT_FILE),
+            str(output_file_path()),
         ]
     )
 
@@ -209,7 +325,7 @@ def build_report() -> None:
 def copy_public_dir() -> None:
     if PUBLIC_DIR.exists():
         shutil.rmtree(PUBLIC_DIR)
-    shutil.copytree(PAGES_PUBLIC_DIR, PUBLIC_DIR)
+    shutil.copytree(public_dir_path(), PUBLIC_DIR)
 
 
 def publish_pages_worktree() -> None:
@@ -539,6 +655,7 @@ def comment_mr() -> None:
 
 def publish_job() -> None:
     print("Starting GitLab Allure History publish job.")
+    ensure_publish_runtime_available()
     prepare_pages_worktree()
     build_report()
     publish_pages_worktree()

@@ -17,6 +17,7 @@ def test_build_report_uses_gitlab_environment_contract(tmp_path, monkeypatch):
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(gitlab_adapter, "run_command", fake_run)
+    monkeypatch.setattr(gitlab_adapter, "validate_runtime_commands", lambda: None)
     monkeypatch.setenv("ENV", "dev")
     monkeypatch.setenv("CI_COMMIT_REF_SLUG", "feature-login")
     monkeypatch.setenv("CI_PAGES_URL", "https://example.gitlab.io/project")
@@ -25,6 +26,9 @@ def test_build_report_uses_gitlab_environment_contract(tmp_path, monkeypatch):
     monkeypatch.setenv("REPORTS_TO_KEEP", "30")
     monkeypatch.setenv("COMPONENT_VERSION", "2026.2.9")
     (tmp_path / "jobid").write_text("123\n", encoding="utf-8")
+    results_dir = tmp_path / "allure-results"
+    results_dir.mkdir()
+    (results_dir / "result.json").write_text("{}\n", encoding="utf-8")
 
     gitlab_adapter.build_report()
 
@@ -68,10 +72,83 @@ def test_build_report_uses_gitlab_environment_contract(tmp_path, monkeypatch):
             "https://gitlab.com/aleksandr-kotlyar/gitlab-allure-history",
             "--generator-version",
             "2026.2.9",
+            "--generator-version-url",
+            "https://gitlab.com/explore/catalog/aleksandr-kotlyar/gitlab-allure-history",
             "--output-file",
             "allure-history-output.json",
         ]
     ]
+
+
+def test_build_report_prefers_generator_version_override(tmp_path, monkeypatch):
+    commands: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(gitlab_adapter, "run_command", fake_run)
+    monkeypatch.setattr(gitlab_adapter, "validate_runtime_commands", lambda: None)
+    monkeypatch.setenv("ENV", "dev")
+    monkeypatch.setenv("CI_COMMIT_REF_SLUG", "feature-login")
+    monkeypatch.setenv("CI_PAGES_URL", "https://example.gitlab.io/project")
+    monkeypatch.setenv("CI_PIPELINE_URL", "https://gitlab.example/group/project/-/pipelines/123")
+    monkeypatch.setenv("ALLURE_HISTORY_GENERATOR_VERSION", "2026.2.10")
+    monkeypatch.setenv("ALLURE_HISTORY_IMAGE_TAG", "2026.2.9")
+    (tmp_path / "jobid").write_text("123\n", encoding="utf-8")
+    results_dir = tmp_path / "allure-results"
+    results_dir.mkdir()
+    (results_dir / "result.json").write_text("{}\n", encoding="utf-8")
+
+    gitlab_adapter.build_report()
+
+    assert commands[0][commands[0].index("--generator-version") + 1] == "2026.2.10"
+
+
+def test_build_report_copies_combined_dependency_artifacts(tmp_path, monkeypatch):
+    commands: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(gitlab_adapter, "run_command", fake_run)
+    monkeypatch.setattr(gitlab_adapter, "validate_runtime_commands", lambda: None)
+    monkeypatch.setenv("ENV", "dev")
+    monkeypatch.setenv("CI_COMMIT_REF_SLUG", "feature-login")
+    monkeypatch.setenv("CI_PAGES_URL", "https://example.gitlab.io/project")
+    monkeypatch.setenv("CI_PIPELINE_URL", "https://gitlab.example/group/project/-/pipelines/123")
+    (tmp_path / "jobid").write_text("123\n", encoding="utf-8")
+    dependency_results = tmp_path / "test_gate" / "allure-results"
+    dependency_results.mkdir(parents=True)
+    (dependency_results / "result.json").write_text("{}\n", encoding="utf-8")
+
+    gitlab_adapter.build_report()
+
+    assert (tmp_path / "allure-results" / "result.json").is_file()
+    assert commands[0][commands[0].index("--results-dir") + 1] == "allure-results"
+
+
+def test_build_report_requires_results_when_no_artifacts_exist(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(gitlab_adapter, "validate_runtime_commands", lambda: None)
+
+    result = gitlab_adapter.main(["build-report"])
+
+    assert result == 1
+
+
+def test_publish_job_rejects_empty_configured_image_tag(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ALLURE_HISTORY_IMAGE_TAG", "")
+    monkeypatch.setattr(gitlab_adapter, "ensure_git_available", lambda: None)
+    monkeypatch.setattr(gitlab_adapter, "validate_runtime_commands", lambda: None)
+
+    result = gitlab_adapter.main(["publish-job"])
+
+    assert result == 1
 
 
 def run_prepare_pages_worktree(tmp_path, monkeypatch, branch_status):
@@ -237,6 +314,18 @@ def test_publish_pages_worktree_skips_pull_for_first_push(tmp_path, monkeypatch)
     assert (tmp_path / "public" / "index.html").is_file()
 
 
+def test_publish_pages_worktree_fails_after_three_attempts(tmp_path, monkeypatch):
+    result, calls, _ = run_publish_pages_worktree(
+        tmp_path,
+        monkeypatch,
+        successful_push=0,
+    )
+
+    assert result == 1
+    assert calls.count("push") == 3
+    assert not (tmp_path / "public").exists()
+
+
 def test_render_comment_body_uses_issue_summary_for_failed_reports():
     body = gitlab_adapter.render_comment_body(
         "https://example.gitlab.io/project/dev/branch/job_123/",
@@ -252,11 +341,39 @@ def test_render_comment_body_uses_issue_summary_for_failed_reports():
     )
 
 
+def test_render_comment_body_uses_tip_alert_for_passed_reports():
+    body = gitlab_adapter.render_comment_body(
+        "https://example.gitlab.io/project/dev/branch/job_123/",
+        {"passed": 44, "failed": 0, "broken": 0, "skipped": 0, "unknown": 0, "total": 44},
+    )
+
+    assert body == (
+        "> [!tip]\n"
+        "> \U0001f7e2 **PASSED** \u00b7 "
+        "[Allure report]"
+        "(https://example.gitlab.io/project/dev/branch/job_123/#categories) "
+        "\u00b7 44 total"
+    )
+
+
 def test_find_existing_note_supports_current_and_legacy_markers():
     notes = [
         {
             "id": 123,
             "body": "Allure report\n\n<!-- allure-history-report -->",
+            "system": False,
+            "author": {"id": 42},
+        }
+    ]
+
+    assert gitlab_adapter.find_existing_note(notes, "42") == "OWN:123"
+
+
+def test_find_existing_note_supports_current_report_link_marker():
+    notes = [
+        {
+            "id": 123,
+            "body": "> [!tip]\n> \U0001f7e2 **PASSED** \u00b7 [Allure report](https://example.test/#categories)",
             "system": False,
             "author": {"id": 42},
         }

@@ -85,6 +85,8 @@ def test_build_report_updates_snapshot_history_metadata_and_indexes(tmp_path):
             "https://github.com/example/github-allure-history",
             "--generator-version",
             "2026.1.0",
+            "--generator-version-url",
+            "https://github.com/example/github-allure-history/releases/tag/2026.1.0",
             "--output-file",
             str(output_file),
         ]
@@ -108,6 +110,10 @@ def test_build_report_updates_snapshot_history_metadata_and_indexes(tmp_path):
     output = json.loads(output_file.read_text())
     assert output["report_name"] == "job_123"
     assert output["snapshot_dir"] == str(snapshot)
+    assert (
+        'href="https://github.com/example/github-allure-history/releases/tag/2026.1.0"'
+        in (public_dir / "index.html").read_text()
+    )
 
 
 def test_build_report_rejects_path_traversal(tmp_path):

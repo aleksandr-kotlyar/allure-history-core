@@ -8,6 +8,7 @@ from generate_index import (
     MOBILE_LIST_BATCH_SIZE_ENV,
     SHOW_FOOTER_ENV,
     VERSION_ENV,
+    VERSION_URL_ENV,
     generator_footer_html,
     index_folder,
     index_tree,
@@ -49,6 +50,8 @@ def test_root_index_shows_project_intro_and_keeps_listing_links(tmp_path):
     assert "<h1>Allure History Publisher</h1>" not in html
     assert "Branch-based Allure report history on static Pages." in html
     assert "No server. No database. No external storage." in html
+    assert '<th class="name-cell">Name</th>' in html
+    assert '<th class="latest-report-cell">Latest report</th>' not in html
     assert 'href="dev/">dev/</a>' in html
     assert html.index('class="hero"') < html.index('class="index-table')
 
@@ -124,7 +127,12 @@ def test_non_root_indexes_do_not_show_project_intro(tmp_path):
         assert 'class="hero"' not in html
         assert "Allure History Publisher" not in html
 
-    assert 'href="feature-login/">feature-login/</a>' in env_html
+    assert (
+        '<a class="entry-link latest-report-link" '
+        'href="feature-login/latest/">feature-login</a>'
+    ) in env_html
+    assert '<a class="history-link" href="feature-login/"' in env_html
+    assert 'href="feature-login/">feature-login/</a>' not in env_html
     assert 'href="job_101/">job_101/</a>' in branch_html
 
 
@@ -371,9 +379,13 @@ def test_navigation_indexes_exclude_report_summary_columns(tmp_path):
     assert '<th class="duration-cell">Duration</th>' not in root_html
     assert '<th class="result-cell">Result</th>' not in env_html
     assert '<th class="duration-cell">Duration</th>' not in env_html
+    assert '<th class="latest-report-cell">Latest report</th>' not in root_html
+    assert '<th class="history-cell">History</th>' not in root_html
+    assert '<th class="latest-report-cell">Latest report</th>' in env_html
+    assert '<th class="history-cell">History</th>' in env_html
 
 
-def test_env_index_links_each_branch_to_latest_report(tmp_path):
+def test_env_index_splits_latest_report_and_history_links(tmp_path):
     env_dir = tmp_path / "public" / "dev"
     branch_dir = env_dir / "feature-login"
     report_dir = branch_dir / "job_101"
@@ -383,21 +395,34 @@ def test_env_index_links_each_branch_to_latest_report(tmp_path):
     index_path = index_folder(env_dir)
 
     html = index_path.read_text(encoding="utf-8")
+    assert '<th class="latest-report-cell">Latest report</th>' in html
+    assert '<th class="history-cell">History</th>' in html
     assert (
-        '<span class="entry-separator">\u00b7</span>'
-        '<a class="entry-latest-link" href="feature-login/latest/">latest</a>'
+        '<a class="entry-link latest-report-link" '
+        'href="feature-login/latest/">feature-login</a>'
     ) in html
+    assert '<a class="history-link" href="feature-login/"' in html
+    assert 'href="feature-login/">feature-login/</a>' not in html
+    assert 'class="entry-separator"' not in html
+    assert 'class="entry-latest-link"' not in html
+    assert html.count('href="feature-login/"') == 1
 
 
-def test_root_index_links_each_env_to_latest_report_inside_env(tmp_path):
+def test_root_index_keeps_environment_rows_visible(tmp_path):
     public_dir = tmp_path / "public"
     old_report = public_dir / "dev" / "master" / "job_101"
     latest_report = public_dir / "dev" / "feature-login" / "job_102"
+    beta_report = public_dir / "beta" / "release" / "job_103"
     old_report.mkdir(parents=True)
     latest_report.mkdir(parents=True)
+    beta_report.mkdir(parents=True)
     (old_report / ".modified_at").write_text("2026-06-05T22:15:00Z\n", encoding="utf-8")
     (latest_report / ".modified_at").write_text(
         "2026-06-06T08:00:00Z\n", encoding="utf-8"
+    )
+    (beta_report / ".modified_at").write_text(
+        "2026-06-07T09:30:00Z\n",
+        encoding="utf-8",
     )
 
     index_tree(public_dir)
@@ -405,10 +430,13 @@ def test_root_index_links_each_env_to_latest_report_inside_env(tmp_path):
     index_path = public_dir / "index.html"
 
     html = index_path.read_text(encoding="utf-8")
-    assert (
-        '<span class="entry-separator">\u00b7</span>'
-        '<a class="entry-latest-link" href="dev/feature-login/latest/">latest</a>'
-    ) in html
+    assert 'href="dev/">dev/</a>' in html
+    assert 'href="beta/">beta/</a>' in html
+    assert "feature-login" not in html
+    assert 'href="release/"' not in html
+    assert 'href="beta/release/"' not in html
+    assert '<th class="latest-report-cell">Latest report</th>' not in html
+    assert '<th class="history-cell">History</th>' not in html
 
 
 def test_index_adds_show_more_controls_for_populated_lists(tmp_path):
@@ -565,6 +593,7 @@ def test_latest_alias_not_generated_for_report_folder(tmp_path):
 
 def test_generator_footer_renders_without_version(monkeypatch):
     monkeypatch.delenv(VERSION_ENV, raising=False)
+    monkeypatch.delenv(VERSION_URL_ENV, raising=False)
     monkeypatch.setenv(SHOW_FOOTER_ENV, "true")
 
     html = generator_footer_html()
@@ -575,6 +604,10 @@ def test_generator_footer_renders_without_version(monkeypatch):
 
 def test_generator_footer_renders_with_version(monkeypatch):
     monkeypatch.setenv(VERSION_ENV, "2026.2.8")
+    monkeypatch.setenv(
+        VERSION_URL_ENV,
+        "https://example.test/catalog/core-allure-history",
+    )
     monkeypatch.setenv(SHOW_FOOTER_ENV, "true")
 
     html = generator_footer_html()
@@ -582,7 +615,11 @@ def test_generator_footer_renders_with_version(monkeypatch):
     assert '<span class="generator-footer-content">' in html
     assert "allure-history" in html
     assert '<span class="dot-separator">\u00b7</span>' in html
-    assert '<span class="generator-version">2026.2.8</span>' in html
+    assert (
+        '<a class="generator-version" '
+        'href="https://example.test/catalog/core-allure-history">2026.2.8</a>'
+        in html
+    )
     assert "2026.2.8" in html
 
 
@@ -597,6 +634,7 @@ def test_generator_footer_skips_moving_refs(monkeypatch):
 
 def test_generator_footer_escapes_version(monkeypatch):
     monkeypatch.setenv(VERSION_ENV, '<script>alert(1)</script>')
+    monkeypatch.delenv(VERSION_URL_ENV, raising=False)
     monkeypatch.setenv(SHOW_FOOTER_ENV, "true")
 
     html = generator_footer_html()
