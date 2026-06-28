@@ -1,19 +1,25 @@
 # Changelog
 
-## Unreleased
+## 2026.2.11 (2026-06-28)
 
 ### Changed
 
-- The GitLab publish helper flow now lives in `core-allure-history`, so the
-  GitLab component can delegate publishing to `allure-history-gitlab
-  publish-job`.
+- Released the post-2026.2.10 GitLab adapter changes for the shared publish
+  job runtime flow in `core-allure-history`.
+- Updated generated indexes with branch-level latest-report navigation,
+  dedicated history links, generator version links, and related layout fixes.
+- Improved merge request comments so existing notes are updated when possible
+  and GitLab API auth, permission, and network failures are easier to diagnose.
+- Hardened the runtime helper with required command checks, image tag
+  validation, configurable paths, and fallback collection of `allure-results`
+  from dependency artifacts.
 
 ### Notes
 
-- Core release history starts from the behavior extracted out of
-  `gitlab-allure-history`. Earlier GitLab component history remains in the
-  [`gitlab-allure-history` changelog][gitlab-allure-history-changelog] and is
-  not duplicated here.
+- This release contains the GitLab, index, MR-comment, and runtime-helper
+  changes that landed after `2026.2.10`.
+- Earlier GitLab component history remains in the
+  [`gitlab-allure-history` changelog][gitlab-allure-history-changelog].
 
 ## 2026.2.10 (2026-06-14)
 
