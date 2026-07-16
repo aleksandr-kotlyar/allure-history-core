@@ -65,4 +65,5 @@ pytest
 
 Tag pipelines build and publish the runtime image to the repository's GitLab
 Container Registry. Adapter releases should pin the same
-`YYYY.MINOR.PATCH` tag.
+`YYYY.MINOR.PATCH` tag. The image includes checksum-verified `s5cmd` so adapters
+can use S3-compatible persistent storage without downloading a client per job.

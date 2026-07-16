@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- The runtime image now includes checksum-verified `s5cmd` 2.3.0 binaries for
+  AMD64 and ARM64 S3-compatible storage workflows.
+
 ## 2026.2.11 (2026-06-28)
 
 ### Changed
