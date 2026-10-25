@@ -74,8 +74,24 @@ python3 -m pip install -r requirements.txt
 pytest
 ```
 
-Tag pipelines publish the runtime image as
-`registry.gitlab.com/aleksandr-kotlyar/allure-history-core:<version>`.
+GitHub CI builds the runtime, generates a real Allure smoke report, and publishes
+the tested image as `ghcr.io/aleksandr-kotlyar/allure-history-core:<version>` for
+release tags, or `sha-<commit>` for branch pushes. Publishing runs only in the
+upstream repository. Pull requests build and smoke-test without publishing.
+
+The image includes both `allure-history-github` and `allure-history-gitlab`
+adapters. The GitHub adapter restores and updates the storage branch, runs Core,
+and exports `report-url` and `public-dir` through `GITHUB_OUTPUT`. GitHub Pages
+deployment remains in the calling workflow.
+
+After the GitHub tag build succeeds, push the same tag to GitLab. Its tag
+pipeline copies that image to
+`registry.gitlab.com/aleksandr-kotlyar/allure-history-core:<version>` using the
+existing GitLab CI registry credentials. It does not rebuild the runtime.
+Keep the GHCR package public so consumers and forks can pull without credentials.
+For branch validation, the manual GitLab mirror job copies the corresponding
+`sha-<commit>` image after that commit's GitHub CI succeeds.
+
 Adapters pin a tested core release independently of their own release version.
 The `2026.4.1` image includes checksum-verified `s5cmd` for S3-compatible
 storage and installs the runtime under `/opt/allure-history-core`.
@@ -92,4 +108,6 @@ git fetch gitlab --tags
 git push github refs/remotes/gitlab/master:refs/heads/master
 ```
 
-Push validated release tags explicitly with `git push github <release-tag>`.
+Publish release tags to GitHub first with `git push github <release-tag>`.
+Wait for the image build and smoke check, then push the same tag to GitLab so
+its registry mirror job can pull the published GHCR image.

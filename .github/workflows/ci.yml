@@ -3,14 +3,18 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -19,3 +23,51 @@ jobs:
 
       - name: Run tests
         run: pytest -q
+
+  runtime:
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select image tag
+        id: image
+        env:
+          IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}
+        run: |
+          tag="sha-${GITHUB_SHA}"
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            tag="${GITHUB_REF_NAME}"
+          fi
+          echo "name=${IMAGE_REPOSITORY,,}:${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Build runtime once
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: |
+          docker build \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            -t "$IMAGE" .
+
+      - name: Smoke runtime and generate an Allure report
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: bash scripts/smoke-runtime.sh "$IMAGE"
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request' && github.repository == 'aleksandr-kotlyar/allure-history-core'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish tested runtime
+        if: github.event_name != 'pull_request' && github.repository == 'aleksandr-kotlyar/allure-history-core'
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: docker push "$IMAGE"
