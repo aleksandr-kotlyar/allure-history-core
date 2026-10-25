@@ -9,7 +9,7 @@ test:
     - pip install --no-cache-dir -r requirements.txt
     - pytest -q
 
-build-runtime-image:
+mirror-runtime-image:
   image: docker:29.3.1
   stage: build
   services:
@@ -20,5 +20,6 @@ build-runtime-image:
   script:
     - set -euo pipefail
     - printf '%s' "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-    - docker build -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG" .
+    - docker pull "ghcr.io/aleksandr-kotlyar/allure-history-core:$CI_COMMIT_TAG"
+    - docker tag "ghcr.io/aleksandr-kotlyar/allure-history-core:$CI_COMMIT_TAG" "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
     - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"

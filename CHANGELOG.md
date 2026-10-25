@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- GitHub adapter and CLI for persistent report history, pull request comments,
+  fork-aware Pages URLs, and GitHub Action outputs.
+- GitHub runtime build, real Allure report smoke check, and GHCR publishing.
+
+### Changed
+
+- GitLab release pipelines mirror the tested GHCR image into GitLab Container
+  Registry instead of building a second runtime.
+
 ## 2026.4.1 (2026-10-26)
 
 ### Changed
