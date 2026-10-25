@@ -8,6 +8,7 @@ mkdir -p "$smoke_dir/allure-results"
 cp tests/fixtures/allure-results/smoke-result.json "$smoke_dir/allure-results/"
 
 docker run --rm --entrypoint sh "$image" -ec '
+  test -s /usr/share/licenses/allure-history-core/LICENSE
   allure-history --help >/dev/null
   allure-history-github --help >/dev/null
   allure-history-gitlab --help >/dev/null

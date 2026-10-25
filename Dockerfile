@@ -40,6 +40,8 @@ RUN case "${TARGETARCH:-$(uname -m)}" in \
 ENV PATH="/allure-${ALLURE_VERSION}/bin:${PATH}"
 ENV ALLURE_HISTORY_CORE_DIR="/opt/allure-history-core"
 
+COPY LICENSE /usr/share/licenses/allure-history-core/LICENSE
+
 WORKDIR /opt/allure-history-core
 COPY allure_history.py generate_index.py github_adapter.py gitlab_adapter.py prune_reports.py smoke_public_pages.py ./
 COPY bin/allure-history bin/allure-history-github bin/allure-history-gitlab /usr/local/bin/
