@@ -128,6 +128,10 @@ def generator_version() -> str:
     if configured:
         return configured
 
+    action_ref = os.environ.get("GITHUB_ACTION_REF", "").strip()
+    if action_ref:
+        return action_ref
+
     workflow_ref = os.environ.get("GITHUB_WORKFLOW_REF", "").strip()
     if "@" in workflow_ref:
         return workflow_ref.rsplit("@", 1)[1]
@@ -551,8 +555,14 @@ def comment_pr() -> None:
     repository = require_env("GITHUB_REPOSITORY")
     comments_url = f"{api_url}/repos/{repository}/issues/{issue_number}/comments"
 
-    _, comments = github_api_request("GET", f"{comments_url}?per_page=100", token)
-    existing_comment_id = find_existing_comment(comments)
+    page = 1
+    while True:
+        query = "?per_page=100" + (f"&page={page}" if page > 1 else "")
+        _, comments = github_api_request("GET", comments_url + query, token)
+        existing_comment_id = find_existing_comment(comments)
+        if existing_comment_id or not isinstance(comments, list) or len(comments) < 100:
+            break
+        page += 1
 
     if existing_comment_id:
         print(f"PR comment: updating comment {existing_comment_id}...")
@@ -570,6 +580,8 @@ def comment_pr() -> None:
     print("PR comment: creating new comment...")
     status, _ = github_api_request("POST", comments_url, token, body={"body": body})
     print(f"PR comment: HTTP {status:03d}")
+    if status != 201:
+        raise RuntimeError(f"Failed to create GitHub PR comment (HTTP {status:03d})")
 
 
 def publish_job() -> None:

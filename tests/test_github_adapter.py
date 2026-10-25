@@ -92,6 +92,13 @@ def test_default_pages_base_url_handles_project_and_user_pages(monkeypatch):
     assert github_adapter.default_pages_base_url() == "https://example.github.io"
 
 
+def test_generator_version_prefers_external_action_ref(monkeypatch):
+    monkeypatch.setenv("GITHUB_ACTION_REF", "2026.5.0")
+    monkeypatch.setenv("GITHUB_WORKFLOW_REF", "consumer/project/.github/workflows/test.yml@main")
+
+    assert github_adapter.generator_version() == "2026.5.0"
+
+
 def test_job_id_prefers_action_input_over_artifact(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     jobid = tmp_path / ".artifacts" / "jobid" / "jobid"
@@ -361,3 +368,43 @@ def test_comment_pr_updates_existing_marker_comment(tmp_path, monkeypatch):
             },
         ),
     ]
+
+
+def test_comment_pr_finds_marker_beyond_first_page(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ALLURE_HISTORY_COMMENT_PR", "true")
+    monkeypatch.setenv("GITHUB_PR_NUMBER", "7")
+    monkeypatch.setenv("GITHUB_TOKEN", "fixture-token")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "example/project")
+    monkeypatch.setattr(github_adapter, "report_url", lambda: "https://example.github.io/project/report/")
+    monkeypatch.setattr(github_adapter, "summary_path", lambda: Path("absent.json"))
+    calls = []
+
+    def fake_api(method, url, token, *, body=None):
+        calls.append((method, url))
+        if method == "PATCH":
+            return 200, {}
+        if "&page=2" in url:
+            return 200, [{"id": 456, "body": github_adapter.PR_MARKER}]
+        return 200, [{"id": n, "body": "other comment"} for n in range(100)]
+
+    monkeypatch.setattr(github_adapter, "github_api_request", fake_api)
+
+    github_adapter.comment_pr()
+
+    assert len(calls) == 3
+    assert calls[1][1].endswith("?per_page=100&page=2")
+    assert calls[2] == ("PATCH", "https://api.github.com/repos/example/project/issues/comments/456")
+
+
+def test_comment_pr_reports_creation_failure(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ALLURE_HISTORY_COMMENT_PR", "true")
+    monkeypatch.setenv("GITHUB_PR_NUMBER", "7")
+    monkeypatch.setenv("GITHUB_TOKEN", "fixture-token")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "example/project")
+    monkeypatch.setattr(github_adapter, "report_url", lambda: "https://example.github.io/project/report/")
+    monkeypatch.setattr(github_adapter, "summary_path", lambda: Path("absent.json"))
+    monkeypatch.setattr(github_adapter, "github_api_request", lambda method, *args, **kwargs: (200, []) if method == "GET" else (403, {}))
+
+    assert github_adapter.main(["comment-pr"]) == 1
