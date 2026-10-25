@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 2026.4.1 (2026-10-26)
+
+### Changed
+
+- Renamed the project to `allure-history-core` and aligned adapter names,
+  generated report metadata, and the runtime installation path.
 
 ### Added
 
@@ -12,7 +17,7 @@
 ### Changed
 
 - Released the post-2026.2.10 GitLab adapter changes for the shared publish
-  job runtime flow in `core-allure-history`.
+  job runtime flow in `allure-history-core`.
 - Updated generated indexes with branch-level latest-report navigation,
   dedicated history links, generator version links, and related layout fixes.
 - Improved merge request comments so existing notes are updated when possible
@@ -26,7 +31,7 @@
 - This release contains the GitLab, index, MR-comment, and runtime-helper
   changes that landed after `2026.2.10`.
 - Earlier GitLab component history remains in the
-  [`gitlab-allure-history` changelog][gitlab-allure-history-changelog].
+  [`allure-history-gitlab` changelog][allure-history-gitlab-changelog].
 
 ## 2026.2.10 (2026-06-14)
 
@@ -40,9 +45,9 @@
 ### Changed
 
 - The provider-neutral runtime that previously lived inside
-  `gitlab-allure-history` was extracted into `core-allure-history`.
+  `allure-history-gitlab` was extracted into `allure-history-core`.
 - Report generation, history restoration, retention, index generation, and
   Pages smoke checks were separated into the shared core runtime so provider
   adapters can reuse the same behavior.
 
-[gitlab-allure-history-changelog]: https://github.com/aleksandr-kotlyar/gitlab-allure-history/blob/master/CHANGELOG.md
+[allure-history-gitlab-changelog]: https://gitlab.com/aleksandr-kotlyar/allure-history-gitlab/-/blob/master/CHANGELOG.md

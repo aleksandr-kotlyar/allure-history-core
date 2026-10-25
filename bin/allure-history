@@ -1,5 +1,5 @@
 #!/bin/sh
 set -eu
 
-CORE_DIR="${ALLURE_HISTORY_CORE_DIR:-/opt/core-allure-history}"
+CORE_DIR="${ALLURE_HISTORY_CORE_DIR:-/opt/allure-history-core}"
 exec python3 "${CORE_DIR}/allure_history.py" "$@"

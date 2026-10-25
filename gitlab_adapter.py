@@ -303,19 +303,19 @@ def build_report() -> None:
             "--reports-to-keep",
             env_or("REPORTS_TO_KEEP", "30"),
             "--public-title",
-            "gitlab-allure-history",
+            "allure-history-gitlab",
             "--publisher-title",
-            "GitLab Allure History Publisher",
+            "Allure History GitLab",
             "--pages-name",
             "GitLab Pages",
             "--generator-name",
-            "gitlab-allure-history",
+            "allure-history-gitlab",
             "--generator-url",
-            "https://gitlab.com/aleksandr-kotlyar/gitlab-allure-history",
+            "https://gitlab.com/aleksandr-kotlyar/allure-history-gitlab",
             "--generator-version",
             component_version(),
             "--generator-version-url",
-            "https://gitlab.com/explore/catalog/aleksandr-kotlyar/gitlab-allure-history",
+            "https://gitlab.com/explore/catalog/aleksandr-kotlyar/allure-history-gitlab",
             "--output-file",
             str(output_file_path()),
         ]
@@ -491,7 +491,7 @@ def gitlab_api_request(
     headers = {
         "Accept": "application/json",
         "PRIVATE-TOKEN": token,
-        "User-Agent": "core-allure-history-gitlab-adapter",
+        "User-Agent": "allure-history-core-gitlab-adapter",
     }
     data = None
     if body is not None:
@@ -654,7 +654,7 @@ def comment_mr() -> None:
 
 
 def publish_job() -> None:
-    print("Starting GitLab Allure History publish job.")
+    print("Starting Allure History GitLab publish job.")
     ensure_publish_runtime_available()
     prepare_pages_worktree()
     build_report()
@@ -664,7 +664,7 @@ def publish_job() -> None:
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
-        description="GitLab adapter helpers for publishing Core Allure History reports."
+        description="GitLab adapter helpers for publishing Allure History Core reports."
     )
     commands = root.add_subparsers(dest="command", required=True)
 

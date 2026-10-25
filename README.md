@@ -1,12 +1,23 @@
-# Core Allure History
+# Allure History Core
 
 Provider-neutral runtime and CLI for static Allure report history.
 
-`core-allure-history` owns report generation, history restoration, retention,
+`allure-history-core` owns report generation, history restoration, retention,
 navigation indexes, executor metadata, and public Pages smoke checks. CI adapters
-such as `gitlab-allure-history` and `github-allure-history` remain responsible for
+such as `allure-history-gitlab` and `allure-history-github` remain responsible for
 downloading artifacts, preparing the persistent storage tree, pushing it, and
 deploying Pages.
+
+## Projects
+
+| Project | Responsibility |
+| --- | --- |
+| [allure-history-core](https://gitlab.com/aleksandr-kotlyar/allure-history-core) | Report generation, history, retention, and indexes. |
+| [allure-history-gitlab](https://gitlab.com/aleksandr-kotlyar/allure-history-gitlab) | GitLab CI/CD, GitLab Pages, and merge request integration. |
+| [allure-history-github](https://github.com/aleksandr-kotlyar/allure-history-github) | GitHub Actions, GitHub Pages, and pull request integration. |
+
+Core development, issues, merge requests, and releases are maintained on GitLab.
+The core's GitHub mirror is updated manually after changes are merged and validated.
 
 ## CLI
 
@@ -63,7 +74,22 @@ python3 -m pip install -r requirements.txt
 pytest
 ```
 
-Tag pipelines build and publish the runtime image to the repository's GitLab
-Container Registry. Adapter releases should pin the same
-`YYYY.MINOR.PATCH` tag. The image includes checksum-verified `s5cmd` so adapters
-can use S3-compatible persistent storage without downloading a client per job.
+Tag pipelines publish the runtime image as
+`registry.gitlab.com/aleksandr-kotlyar/allure-history-core:<version>`.
+Adapters pin a tested core release independently of their own release version.
+The `2026.4.1` image includes checksum-verified `s5cmd` for S3-compatible
+storage and installs the runtime under `/opt/allure-history-core`.
+
+## Manual GitHub Sync
+
+Use a GitLab checkout with an explicit GitHub remote:
+
+```bash
+git clone --origin gitlab git@gitlab.com:aleksandr-kotlyar/allure-history-core.git
+cd allure-history-core
+git remote add github git@github.com:aleksandr-kotlyar/allure-history-core.git
+git fetch gitlab --tags
+git push github refs/remotes/gitlab/master:refs/heads/master
+```
+
+Push validated release tags explicitly with `git push github <release-tag>`.

@@ -38,9 +38,9 @@ RUN case "${TARGETARCH:-$(uname -m)}" in \
     && s5cmd version
 
 ENV PATH="/allure-${ALLURE_VERSION}/bin:${PATH}"
-ENV ALLURE_HISTORY_CORE_DIR="/opt/core-allure-history"
+ENV ALLURE_HISTORY_CORE_DIR="/opt/allure-history-core"
 
-WORKDIR /opt/core-allure-history
+WORKDIR /opt/allure-history-core
 COPY allure_history.py generate_index.py gitlab_adapter.py prune_reports.py smoke_public_pages.py ./
 COPY bin/allure-history bin/allure-history-gitlab /usr/local/bin/
 RUN chmod +x /usr/local/bin/allure-history /usr/local/bin/allure-history-gitlab

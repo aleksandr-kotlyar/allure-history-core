@@ -74,19 +74,19 @@ def test_build_report_updates_snapshot_history_metadata_and_indexes(tmp_path):
             "--allure-command",
             str(fake_allure(tmp_path)),
             "--public-title",
-            "github-allure-history",
+            "allure-history-github",
             "--publisher-title",
-            "GitHub Allure History Publisher",
+            "Allure History GitHub",
             "--pages-name",
             "GitHub Pages",
             "--generator-name",
-            "github-allure-history",
+            "allure-history-github",
             "--generator-url",
-            "https://github.com/example/github-allure-history",
+            "https://github.com/example/allure-history-github",
             "--generator-version",
             "2026.1.0",
             "--generator-version-url",
-            "https://github.com/example/github-allure-history/releases/tag/2026.1.0",
+            "https://github.com/example/allure-history-github/releases/tag/2026.1.0",
             "--output-file",
             str(output_file),
         ]
@@ -111,7 +111,7 @@ def test_build_report_updates_snapshot_history_metadata_and_indexes(tmp_path):
     assert output["report_name"] == "job_123"
     assert output["snapshot_dir"] == str(snapshot)
     assert (
-        'href="https://github.com/example/github-allure-history/releases/tag/2026.1.0"'
+        'href="https://github.com/example/allure-history-github/releases/tag/2026.1.0"'
         in (public_dir / "index.html").read_text()
     )
 

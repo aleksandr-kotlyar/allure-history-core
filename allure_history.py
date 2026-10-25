@@ -256,10 +256,10 @@ def parser() -> argparse.ArgumentParser:
     build.add_argument("--public-title", default="allure-history")
     build.add_argument("--publisher-title", default="Allure History Publisher")
     build.add_argument("--pages-name", default="static Pages")
-    build.add_argument("--generator-name", default="core-allure-history")
+    build.add_argument("--generator-name", default="allure-history-core")
     build.add_argument(
         "--generator-url",
-        default="https://github.com/aleksandr-kotlyar/core-allure-history",
+        default="https://gitlab.com/aleksandr-kotlyar/allure-history-core",
     )
     build.add_argument("--generator-version", default="")
     build.add_argument("--generator-version-url", default="")

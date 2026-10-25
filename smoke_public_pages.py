@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 
 DEFAULT_ATTEMPTS = 12
 DEFAULT_DELAY_SECONDS = 5.0
-USER_AGENT = "core-allure-history-pages-smoke"
+USER_AGENT = "allure-history-core-pages-smoke"
 
 
 def public_page_urls(base_url: str, environment: str, branch: str, report: str):

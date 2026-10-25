@@ -33,10 +33,10 @@ MOBILE_LIST_BATCH_SIZE = 12
 SHOW_FOOTER_ENV = "ALLURE_HISTORY_SHOW_FOOTER"
 VERSION_ENV = "ALLURE_HISTORY_VERSION"
 VERSION_URL_ENV = "ALLURE_HISTORY_VERSION_URL"
-GENERATOR_NAME = os.environ.get("ALLURE_HISTORY_GENERATOR_NAME", "core-allure-history")
+GENERATOR_NAME = os.environ.get("ALLURE_HISTORY_GENERATOR_NAME", "allure-history-core")
 GENERATOR_URL = os.environ.get(
     "ALLURE_HISTORY_GENERATOR_URL",
-    "https://github.com/aleksandr-kotlyar/core-allure-history",
+    "https://gitlab.com/aleksandr-kotlyar/allure-history-core",
 )
 MOVING_REF_VERSIONS = {"latest", "master", "main"}
 
