@@ -89,6 +89,8 @@ pipeline copies that image to
 `registry.gitlab.com/aleksandr-kotlyar/allure-history-core:<version>` using the
 existing GitLab CI registry credentials. It does not rebuild the runtime.
 Keep the GHCR package public so consumers and forks can pull without credentials.
+For branch validation, the manual GitLab mirror job copies the corresponding
+`sha-<commit>` image after that commit's GitHub CI succeeds.
 
 Adapters pin a tested core release independently of their own release version.
 The `2026.4.1` image includes checksum-verified `s5cmd` for S3-compatible
