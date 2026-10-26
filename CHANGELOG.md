@@ -4,6 +4,8 @@
 
 ### Added
 
+- Full S3 report publication for GitLab and GitHub, including history restoration,
+  custom report groups, scoped retention, navigation, comments, and action outputs.
 - Read-only navigation previews for existing report trees, timestamp snapshots,
   explicit navigation roots, and an optional project intro.
 - S3 metadata-only indexing, conditional publication plans, backups, and rollback.

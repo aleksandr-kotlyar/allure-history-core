@@ -189,6 +189,12 @@ def ensure_results_present() -> None:
 
 
 def report_url() -> str:
+    try:
+        data = json.loads(output_file_path().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        data = None
+    if isinstance(data, dict) and isinstance(data.get("report_url"), str) and data["report_url"]:
+        return data["report_url"]
     return public_report_url(
         require_env("CI_PAGES_URL"),
         report_group_path(os.environ.get("ALLURE_HISTORY_GROUP_PATH", ""), report_env(), report_branch()),
@@ -263,7 +269,7 @@ def prepare_pages_worktree() -> None:
     )
 
 
-def build_report() -> None:
+def build_report(*, public_dir: Path | None = None, base_url: str = "", public_title: str = "") -> None:
     validate_runtime_commands()
     jid = job_id()
     env_name = report_env()
@@ -284,7 +290,7 @@ def build_report() -> None:
             "--results-dir",
             str(results_dir_path()),
             "--public-dir",
-            str(public_dir_path()),
+            str(public_dir if public_dir is not None else public_dir_path()),
             "--environment",
             env_name,
             "--branch",
@@ -292,7 +298,7 @@ def build_report() -> None:
             "--report-id",
             jid,
             "--pages-base-url",
-            require_env("CI_PAGES_URL"),
+            base_url or require_env("CI_PAGES_URL"),
             "--ci-name",
             "GitLab CI",
             "--ci-type",
@@ -306,7 +312,7 @@ def build_report() -> None:
             "--reports-to-keep",
             env_or("REPORTS_TO_KEEP", "30"),
             "--public-title",
-            "allure-history-gitlab",
+            public_title or "allure-history-gitlab",
             "--publisher-title",
             "Allure History GitLab",
             "--pages-name",

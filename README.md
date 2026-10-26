@@ -152,6 +152,58 @@ which report is latest. Reports without usable time metadata display `n/a`.
 `ALLURE_HISTORY_SHOW_FOOTER=false` remains the existing footer switch. Both
 default to visible in the legacy Pages flow. License notices remain in source.
 
+## Publishing reports to S3
+
+`publish-job` uses S3 as the persistent backend for the complete report cycle:
+restore the tree/history, generate a new report through Core, apply per-group
+retention, upload the report and history, refresh navigation, then prune old
+objects. GitLab/GitHub metadata, optional MR/PR comments, and GitHub outputs
+come from the same CI adapters as the git-backed publisher. No storage branch,
+Git push token, or Pages deployment is needed.
+
+```bash
+ALLURE_HISTORY_GROUP_PATH="$QA_ENV/$CI_PROJECT_NAME/$NAMESPACE" \
+REPORTS_TO_KEEP=30 \
+allure-history-s3 publish-job --provider gitlab \
+  --s3-uri s3://reports/team/project \
+  --public-url https://reports.example.test/team/project
+```
+
+Use `--provider github` in GitHub Actions. The provider reads the same normal CI
+variables and `allure-results`/`jobid` artifacts as its existing adapter. Optional
+`ALLURE_HISTORY_RESULTS_DIR`, `ENV`, and `ALLURE_HISTORY_GROUP_PATH` retain their
+existing meanings. `--public-title` defaults to `allure-history`; the intro banner
+is hidden unless `ALLURE_HISTORY_SHOW_INTRO=true`. `--public-url` describes the
+report origin, independently of the API endpoint or Pages. GitLab comments read
+the actual report URL from Core output, so `CI_PAGES_URL` is not required here.
+
+The default local tree is `allure-s3/public`; it must be empty before publication.
+This implementation restores the full owned prefix, with bounded parallel
+transfers, so large archives cost download time and disk space. Existing report
+objects are not reuploaded; uploads cover the new snapshot, current group history,
+navigation, and time metadata. Content types are set for new files. Old objects
+are removed only after report and navigation uploads succeed. Retention must be
+positive. Changing `group-path` creates a new group and preserves existing groups.
+
+Publication requires a **dedicated non-root prefix**, exclusively owned by this
+tree. Do not choose a prefix containing unrelated storage, or use overlapping
+prefixes for independent publishers. All publishers must share the same prefix
+and conditional lock, including the navigation commands below. A busy prefix
+fails rather than overwriting a publisher's work. AWS credentials, endpoint and
+addressing-style configuration use the standard boto3 chain.
+
+S3 publication is atomic per object, not per report tree. A failed transfer can
+leave partial new report files; old report retention and history are not advanced
+when snapshot upload fails. A failed job can be rerun with the same snapshot ID
+in a clean local workspace. Keep snapshot IDs unique across jobs/projects sharing
+a group. Stop other publishers before inspecting a lock left by a killed job.
+The navigation rollback command below restores navigation only, not report data
+or retention deletions.
+
+The GitLab `allure-history-s3` component and GitHub `s3` action expose this flow.
+The separate `allure-history-s3-index` component and `s3-index` action manage
+navigation for reports produced elsewhere.
+
 ## Existing reports in S3
 
 The `allure-history-s3` adapter handles S3 I/O; the index generator stays local.

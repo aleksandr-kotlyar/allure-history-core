@@ -250,7 +250,7 @@ def prepare_pages_worktree() -> None:
     )
 
 
-def build_report() -> None:
+def build_report(*, public_dir: Path | None = None, base_url: str = "", public_title: str = "") -> None:
     validate_runtime_commands()
     ensure_results_present()
 
@@ -270,7 +270,7 @@ def build_report() -> None:
         "--results-dir",
         str(results_dir_path()),
         "--public-dir",
-        str(public_dir_path()),
+        str(public_dir if public_dir is not None else public_dir_path()),
         "--environment",
         env_name,
         "--branch",
@@ -278,7 +278,7 @@ def build_report() -> None:
         "--report-id",
         jid,
         "--pages-base-url",
-        pages_base_url(),
+        base_url or pages_base_url(),
         "--ci-name",
         "GitHub Actions",
         "--ci-type",
@@ -292,7 +292,7 @@ def build_report() -> None:
         "--reports-to-keep",
         env_or("REPORTS_TO_KEEP", "30"),
         "--public-title",
-        "allure-history-github",
+        public_title or "allure-history-github",
         "--publisher-title",
         "Allure History GitHub",
         "--pages-name",
@@ -589,6 +589,16 @@ def comment_pr() -> None:
         raise RuntimeError(f"Failed to create GitHub PR comment (HTTP {status:03d})")
 
 
+def write_outputs(public_dir: Path = PUBLIC_DIR) -> None:
+    output = os.environ.get("GITHUB_OUTPUT", "")
+    if output:
+        url = report_url()
+        if "\n" in url or "\r" in url:
+            raise RuntimeError("Report URL must be a single line")
+        with Path(output).open("a", encoding="utf-8") as stream:
+            stream.write(f"report-url={url}\npublic-dir={public_dir}\n")
+
+
 def publish_job() -> None:
     print("Starting GitHub Allure History publish job.")
     validate_runtime_commands()
@@ -596,13 +606,7 @@ def publish_job() -> None:
     prepare_pages_worktree()
     build_report()
     publish_pages_worktree()
-    output = os.environ.get("GITHUB_OUTPUT", "")
-    if output:
-        url = report_url()
-        if "\n" in url or "\r" in url:
-            raise RuntimeError("Report URL must be a single line")
-        with Path(output).open("a", encoding="utf-8") as stream:
-            stream.write(f"report-url={url}\npublic-dir={PUBLIC_DIR}\n")
+    write_outputs()
     comment_pr()
 
 
