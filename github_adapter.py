@@ -12,6 +12,7 @@ from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 from allure_history import slug, utc_timestamp
+from report_paths import public_report_url, report_group_path
 
 
 PAGES_WORKTREE = Path("pages-worktree")
@@ -258,8 +259,10 @@ def build_report() -> None:
     branch = report_branch()
     stamp = utc_timestamp()
 
+    group_path = os.environ.get("ALLURE_HISTORY_GROUP_PATH", "")
+    group = report_group_path(group_path, env_name, branch)
     print(
-        f"Building Allure report for environment '{env_name}', branch '{branch}', run '{jid}'."
+        f"Building Allure report for group '{group.as_posix()}', run '{jid}'."
     )
     command = [
         "allure-history",
@@ -306,6 +309,8 @@ def build_report() -> None:
     version_url = generator_version_url()
     if version_url:
         command.extend(["--generator-version-url", version_url])
+    if group_path:
+        command.extend(["--group-path", group_path])
 
     run_command(command)
 
@@ -410,11 +415,10 @@ def report_url() -> str:
     if isinstance(value, str) and value:
         return value
 
-    return "{}/{}/{}/{}/".format(
-        pages_base_url().rstrip("/"),
-        quote(report_env(), safe=""),
-        quote(report_branch(), safe=""),
-        quote(report_dir_name(), safe=""),
+    return public_report_url(
+        pages_base_url(),
+        report_group_path(os.environ.get("ALLURE_HISTORY_GROUP_PATH", ""), report_env(), report_branch()),
+        report_dir_name(),
     )
 
 
@@ -423,7 +427,8 @@ def summary_path() -> Path:
     value = data.get("snapshot_dir")
     if isinstance(value, str) and value:
         return Path(value) / "widgets" / "summary.json"
-    return public_dir_path() / report_env() / report_branch() / report_dir_name() / "widgets" / "summary.json"
+    group = report_group_path(os.environ.get("ALLURE_HISTORY_GROUP_PATH", ""), report_env(), report_branch())
+    return public_dir_path() / group / report_dir_name() / "widgets" / "summary.json"
 
 
 def load_summary_statistic(path: Path) -> dict[str, int]:

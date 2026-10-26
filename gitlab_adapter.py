@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from allure_history import utc_timestamp
+from report_paths import public_report_url, report_group_path
 
 
 PAGES_WORKTREE = Path("pages-worktree")
@@ -188,10 +189,9 @@ def ensure_results_present() -> None:
 
 
 def report_url() -> str:
-    return "{}/{}/{}/{}/".format(
-        require_env("CI_PAGES_URL").rstrip("/"),
-        report_env(),
-        report_branch(),
+    return public_report_url(
+        require_env("CI_PAGES_URL"),
+        report_group_path(os.environ.get("ALLURE_HISTORY_GROUP_PATH", ""), report_env(), report_branch()),
         report_dir_name(),
     )
 
@@ -271,9 +271,12 @@ def build_report() -> None:
     stamp = modified_at()
     ensure_results_present()
 
+    group_path = os.environ.get("ALLURE_HISTORY_GROUP_PATH", "")
+    group = report_group_path(group_path, env_name, branch)
     print(
-        f"Building Allure report for environment '{env_name}', branch '{branch}', job '{jid}'."
+        f"Building Allure report for group '{group.as_posix()}', job '{jid}'."
     )
+    group_args = ["--group-path", group_path] if group_path else []
     run_command(
         [
             "allure-history",
@@ -319,6 +322,7 @@ def build_report() -> None:
             "--output-file",
             str(output_file_path()),
         ]
+        + group_args
     )
 
 

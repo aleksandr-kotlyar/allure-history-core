@@ -35,6 +35,39 @@ statistic = json.loads(Path(sys.argv[1]).read_text())["statistic"]
 assert statistic["total"] == 1 and statistic["passed"] == 1, statistic
 PY
 
+docker run --rm --user "$(id -u):$(id -g)" \
+  -v "$smoke_dir:/work" -w /work \
+  -e CI_JOB_ID=2 -e CI_PAGES_URL=https://reports.example.test/prefix \
+  -e CI_PIPELINE_URL=https://ci.example.test/2 \
+  -e ALLURE_HISTORY_GROUP_PATH='dev/project/custom group' \
+  -e REPORTS_TO_KEEP=1 \
+  --entrypoint allure-history-gitlab "$image" build-report
+
+docker run --rm --user "$(id -u):$(id -g)" \
+  -v "$smoke_dir:/work" -w /work \
+  -e GITHUB_REPOSITORY=example/fork -e GITHUB_REF_NAME=smoke -e GITHUB_RUN_ID=3 \
+  -e PAGES_BASE_URL_INPUT=https://reports.example.test/prefix \
+  -e ALLURE_HISTORY_GROUP_PATH='dev/project/custom group' \
+  -e REPORTS_TO_KEEP=1 \
+  --entrypoint allure-history-github "$image" build-report
+
+python3 - "$smoke_dir" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+group = root / 'pages-worktree/public/dev/project/custom group'
+assert not (group / 'job_2').exists()
+assert (group / 'job_3/index.html').is_file()
+assert (root / 'pages-worktree/public/dev/smoke/job_1/index.html').is_file()
+assert len(json.loads((group / 'history/history-trend.json').read_text())) == 2
+assert '../job_3/' in (group / 'latest/index.html').read_text()
+output = json.loads((root / 'allure-history-output.json').read_text())
+assert output['group_path'] == 'dev/project/custom group'
+assert output['report_url'] == 'https://reports.example.test/prefix/dev/project/custom%20group/job_3/'
+PY
+
 cp "$report/index.html" "$smoke_dir/original-report.html"
 docker run --rm --user "$(id -u):$(id -g)" \
   -v "$smoke_dir:/work" -w /work \

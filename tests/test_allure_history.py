@@ -154,8 +154,7 @@ def test_write_executor_encodes_report_path_segments(tmp_path):
     report_url = allure_history.write_executor(
         tmp_path,
         pages_base_url="https://example.test/project/",
-        environment="test env",
-        branch="feature login",
+        group_path=Path("test env/feature login"),
         report_name="job_123",
         ci_name="CI",
         ci_type="ci",

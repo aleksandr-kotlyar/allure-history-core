@@ -67,6 +67,58 @@ The `build-report` command expects an existing or empty public storage tree. It:
 The command does not clone, commit, push, or deploy. Those operations remain in
 the provider adapter.
 
+## Custom report groups
+
+Set `--group-path` to place each new report in a custom relative directory,
+instead of `{environment}/{branch}`. For example, add this to `build-report`:
+
+```bash
+--group-path "$QA_ENV/$CI_PROJECT_NAME/$NAMESPACE"
+```
+
+With `dev`, `qa_python`, and `qa-mdsp-latest`, Core creates:
+
+```text
+public/dev/qa_python/qa-mdsp-latest/
+  job_123/
+  job_124/
+  latest/
+  history/
+```
+
+The path can have one or many levels. Directories and navigation are created
+automatically. CI expands the variables before calling Core; Core accepts the
+resulting path literally, without evaluating variables or templates. Spaces and
+Unicode names are preserved on disk and encoded in URLs. `--environment` and
+`--branch` are optional when `--group-path` is set. Omitting it keeps the default
+`{environment}/{branch}` layout.
+
+Each exact group path has its own Allure history, `latest/`, and snapshot
+retention. Include the branch or project in the path when they must have separate
+histories. Snapshot IDs must be unique within a group; publishing the same ID
+replaces that snapshot. Changing the path starts a new group; it does not move
+old reports. Core's JSON output includes `group_path`, `snapshot_dir`, and the
+actual `report_url`; executor links and adapter comments use the same path.
+
+Paths must be relative, with no empty, `.` or `..` segments, backslashes, or
+control characters. Report/service names are reserved as group segments:
+`job_*`, timestamp-shaped `YYYY-MM-DD_HH-MM-SS`, `history`, `.history`, `latest`,
+`widgets`, `data`, `index.html`, and `.modified_at`. A group cannot pass through
+an existing report, file, or symlink.
+
+The CI adapters accept `ALLURE_HISTORY_GROUP_PATH`. Their GitLab component,
+GitHub action, and reusable workflow expose it as `group-path`. Use CI variables
+in GitLab and expressions such as `${{ github.event.repository.name }}` in
+GitHub; no separate tree schema is required. The same generated tree can be
+uploaded to storage and indexed by the existing S3 navigation command.
+
+Public smoke checks accept the same path:
+
+```bash
+allure-history smoke --base-url https://reports.example.test \
+  --group-path dev/qa_python/qa-mdsp-latest --report job_124
+```
+
 ## Existing report navigation
 
 Build a separate HTML preview from a local tree of existing reports:
@@ -90,7 +142,8 @@ The explicit root can have any name. Groups can be nested to any depth, includin
 `.history/` are hidden. Reports are recognised by `job_NNN`, timestamp names,
 `widgets/summary.json`, or an index with `widgets/` or `data/`. Indexing stops at
 the report boundary even if summary JSON is missing or malformed. Symbolic links
-are not followed. `build-report` keeps its existing layout and retention defaults.
+are not followed. `build-report` keeps its default layout unless `--group-path`
+is supplied; retention is scoped to the selected group.
 
 Sorting uses `.modified_at`, the timestamp folder name, or summary start time;
 numeric jobs retain their ID fallback. Filesystem download times do not decide

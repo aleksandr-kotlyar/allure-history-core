@@ -42,6 +42,27 @@ def test_wait_for_public_pages_retries_until_every_url_is_available():
     assert sleeps == [3]
 
 
+def test_custom_group_smoke_checks_every_parent_and_the_group_report_urls(monkeypatch):
+    import allure_history
+    import smoke_public_pages
+
+    expected = (
+        "https://reports.test/prefix/dev/",
+        "https://reports.test/prefix/dev/project/",
+        "https://reports.test/prefix/dev/project/browser%20name/",
+        "https://reports.test/prefix/dev/project/browser%20name/latest/",
+        "https://reports.test/prefix/dev/project/browser%20name/job_123/",
+    )
+    calls = []
+    monkeypatch.setattr(allure_history, "wait_for_public_pages", lambda urls, **kwargs: calls.append(urls))
+    monkeypatch.setattr(smoke_public_pages, "wait_for_public_pages", lambda urls, **kwargs: calls.append(urls))
+    args = ["--base-url", "https://reports.test/prefix", "--group-path", "dev/project/browser name",
+            "--report", "job_123"]
+    assert allure_history.main(["smoke", *args]) == 0
+    assert smoke_public_pages.main(args) == 0
+    assert calls == [expected, expected]
+
+
 def test_wait_for_public_pages_reports_unavailable_urls():
     url = "https://example.test/dev/master/job_123/"
 

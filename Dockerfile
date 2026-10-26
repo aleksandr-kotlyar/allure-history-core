@@ -45,7 +45,7 @@ COPY LICENSE /usr/share/licenses/allure-history-core/LICENSE
 WORKDIR /opt/allure-history-core
 COPY requirements-runtime.txt ./
 RUN pip install --no-cache-dir -r requirements-runtime.txt
-COPY allure_history.py generate_index.py github_adapter.py gitlab_adapter.py s3_adapter.py prune_reports.py smoke_public_pages.py ./
+COPY allure_history.py generate_index.py github_adapter.py gitlab_adapter.py s3_adapter.py prune_reports.py report_paths.py smoke_public_pages.py ./
 COPY bin/allure-history bin/allure-history-github bin/allure-history-gitlab bin/allure-history-s3 /usr/local/bin/
 RUN chmod +x /usr/local/bin/allure-history /usr/local/bin/allure-history-github /usr/local/bin/allure-history-gitlab /usr/local/bin/allure-history-s3
 
