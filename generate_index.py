@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 from dataclasses import dataclass
@@ -16,7 +17,7 @@ MODIFIED_AT_FILENAME = ".modified_at"
 SUMMARY_FILENAME = "widgets/summary.json"
 HISTORY_DIRNAME = "history"
 LATEST_DIRNAME = "latest"
-HIDDEN_INDEX_ENTRIES = {INDEX_FILENAME, MODIFIED_AT_FILENAME, HISTORY_DIRNAME, LATEST_DIRNAME}
+HIDDEN_INDEX_ENTRIES = {INDEX_FILENAME, MODIFIED_AT_FILENAME, HISTORY_DIRNAME, LATEST_DIRNAME, ".history"}
 
 ROOT_INDEX_DIR = "public"
 PUBLIC_TITLE = os.environ.get("ALLURE_HISTORY_PUBLIC_TITLE", "allure-history")
@@ -31,6 +32,7 @@ MOBILE_LIST_BATCH_SIZE_ENV = "ALLURE_HISTORY_INDEX_MOBILE_BATCH_SIZE"
 DESKTOP_LIST_BATCH_SIZE = 25
 MOBILE_LIST_BATCH_SIZE = 12
 SHOW_FOOTER_ENV = "ALLURE_HISTORY_SHOW_FOOTER"
+SHOW_INTRO_ENV = "ALLURE_HISTORY_SHOW_INTRO"
 VERSION_ENV = "ALLURE_HISTORY_VERSION"
 VERSION_URL_ENV = "ALLURE_HISTORY_VERSION_URL"
 GENERATOR_NAME = os.environ.get("ALLURE_HISTORY_GENERATOR_NAME", "allure-history-core")
@@ -749,9 +751,26 @@ def job_id(entry: Path) -> int | None:
         return None
 
 
+def report_datetime(entry: Path) -> datetime | None:
+    try:
+        return datetime.strptime(entry.name, "%Y-%m-%d_%H-%M-%S")
+    except ValueError:
+        return None
+
+
 def read_modified_at(entry: Path) -> str:
     modified_at_path = entry / MODIFIED_AT_FILENAME
     if not modified_at_path.is_file():
+        stamp = report_datetime(entry)
+        if stamp is not None:
+            return stamp.isoformat()
+        try:
+            summary = json.loads((entry / SUMMARY_FILENAME).read_text(encoding="utf-8"))
+            start = numeric_value(summary["time"]["start"])
+            if start is not None:
+                return datetime.fromtimestamp(start / 1000).isoformat()
+        except (OSError, ValueError, TypeError, KeyError, OverflowError):
+            pass
         return ""
 
     lines = modified_at_path.read_text(encoding="utf-8").splitlines()
@@ -777,6 +796,12 @@ def format_datetime(value: datetime) -> str:
 
 def format_entry_modified_at(entry: Path) -> str:
     modified_at = read_modified_at(entry)
+    if not modified_at and entry.is_dir():
+        report = latest_report_for(entry)
+        if report is not None:
+            modified_at = read_modified_at(report)
+        if not modified_at:
+            return "n/a"
     parsed_modified_at = parse_modified_at(modified_at)
 
     if parsed_modified_at is not None:
@@ -793,11 +818,15 @@ def numeric_value(value: object) -> float | None:
         return None
 
     if isinstance(value, (int, float)):
-        return float(value)
+        try:
+            return float(value) if math.isfinite(value) else None
+        except OverflowError:
+            return None
 
     if isinstance(value, str):
         try:
-            return float(value.strip())
+            parsed = float(value.strip())
+            return parsed if math.isfinite(parsed) else None
         except ValueError:
             return None
 
@@ -924,16 +953,19 @@ def entry_sort_key(entry: Path) -> tuple[object, ...]:
 
 def iter_entries(folder: Path) -> list[Path]:
     return sorted(
-        (entry for entry in folder.iterdir() if entry.name not in HIDDEN_INDEX_ENTRIES),
+        (entry for entry in folder.iterdir() if entry.name not in HIDDEN_INDEX_ENTRIES and not entry.is_symlink()),
         key=entry_sort_key,
     )
 
 
 def is_report_folder(folder: Path) -> bool:
-    return folder.is_dir() and job_id(folder) is not None
-
-
-
+    return folder.is_dir() and (
+        job_id(folder) is not None
+        or report_datetime(folder) is not None
+        or (folder / SUMMARY_FILENAME).is_file()
+        or ((folder / INDEX_FILENAME).is_file()
+            and ((folder / "widgets").is_dir() or (folder / "data").is_dir()))
+    )
 
 
 REDIRECT_HTML_TEMPLATE = """<!doctype html>
@@ -951,18 +983,23 @@ REDIRECT_HTML_TEMPLATE = """<!doctype html>
 """
 
 
-def generate_latest_alias(folder: Path) -> Path | None:
+def generate_latest_alias(
+    folder: Path, *, output_folder: Path | None = None,
+    root: Path | None = None, report_base_url: str = "",
+) -> Path | None:
     latest_report = latest_report_for(folder)
     if latest_report is None or latest_report.parent != folder:
         return None
 
-    latest_dir = folder / LATEST_DIRNAME
+    latest_dir = (output_folder or folder) / LATEST_DIRNAME
     latest_dir.mkdir(exist_ok=True)
     relative_path = "../" + quote(latest_report.name, safe="") + "/"
+    if report_base_url:
+        relative_path = report_href(latest_report, root, report_base_url)
 
     index_path = latest_dir / INDEX_FILENAME
     index_path.write_text(
-        REDIRECT_HTML_TEMPLATE.format(href=relative_path),
+        REDIRECT_HTML_TEMPLATE.format(href=escape(relative_path, quote=True)),
         encoding="utf-8",
     )
     return index_path
@@ -978,7 +1015,7 @@ def iter_report_folders(folder: Path) -> list[Path]:
         return [folder]
 
     for entry in folder.iterdir():
-        if entry.name in HIDDEN_INDEX_ENTRIES or not entry.is_dir():
+        if entry.name in HIDDEN_INDEX_ENTRIES or not entry.is_dir() or entry.is_symlink():
             continue
 
         reports.extend(iter_report_folders(entry))
@@ -996,7 +1033,8 @@ def latest_report_for(folder: Path) -> Path | None:
 
 
 def is_indexable_folder(folder: Path) -> bool:
-    return folder.is_dir() and folder.name not in HIDDEN_INDEX_ENTRIES and job_id(folder) is None
+    return (folder.is_dir() and not folder.is_symlink()
+            and folder.name not in HIDDEN_INDEX_ENTRIES and not is_report_folder(folder))
 
 
 def iter_index_folders(root: Path) -> list[Path]:
@@ -1020,6 +1058,12 @@ def iter_index_folders(root: Path) -> list[Path]:
 def link_for(entry: Path) -> str:
     suffix = "/" if entry.is_dir() else ""
     return quote(entry.name, safe="") + suffix
+
+
+def report_href(entry: Path, root: Path | None, report_base_url: str) -> str:
+    if report_base_url and root is not None and is_report_folder(entry):
+        return report_base_url.rstrip("/") + "/" + link_for_path(entry.relative_to(root))
+    return link_for(entry)
 
 
 def label_for(entry: Path) -> str:
@@ -1053,7 +1097,9 @@ def latest_report_context_label(entry: Path, report: Path) -> str:
     return suffix.as_posix() + "/"
 
 
-def display_path(folder: Path) -> str:
+def display_path(folder: Path, root: Path | None = None) -> str:
+    if root is not None:
+        return "/".join([PUBLIC_TITLE, *folder.relative_to(root).parts])
     parts = folder.as_posix().split("/")
 
     if ROOT_INDEX_DIR not in parts:
@@ -1065,7 +1111,10 @@ def display_path(folder: Path) -> str:
     return "/".join([PUBLIC_TITLE, *suffix_parts])
 
 
-def public_suffix_parts(folder: Path) -> list[str] | None:
+def public_suffix_parts(folder: Path, root: Path | None = None) -> list[str] | None:
+    if root is not None:
+        return list(folder.relative_to(root).parts)
+    # Preserve the legacy single-folder helper; recursive indexing always supplies root.
     parts = folder.as_posix().split("/")
 
     if ROOT_INDEX_DIR not in parts:
@@ -1075,8 +1124,8 @@ def public_suffix_parts(folder: Path) -> list[str] | None:
     return parts[public_index + 1 :]
 
 
-def breadcrumb_html(folder: Path) -> str:
-    suffix_parts = public_suffix_parts(folder)
+def breadcrumb_html(folder: Path, root: Path | None = None) -> str:
+    suffix_parts = public_suffix_parts(folder, root)
 
     if suffix_parts is None:
         return f"<h1>{escape(folder.as_posix())}</h1>"
@@ -1106,8 +1155,9 @@ def breadcrumb_html(folder: Path) -> str:
     return "".join(html_parts)
 
 
-def root_intro_html(folder: Path) -> str:
-    if public_suffix_parts(folder) != []:
+def root_intro_html(folder: Path, root: Path | None = None) -> str:
+    if (public_suffix_parts(folder, root) != []
+            or os.environ.get(SHOW_INTRO_ENV, "true").lower() not in ("true", "1", "yes")):
         return ""
 
     return """
@@ -1123,7 +1173,9 @@ def root_intro_html(folder: Path) -> str:
     ).rstrip()
 
 
-def entry_title_html(entry: Path, is_latest: bool) -> str:
+def entry_title_html(
+    entry: Path, is_latest: bool, root: Path | None = None, report_base_url: str = "",
+) -> str:
     badge = ' <span class="latest-badge">latest</span>' if is_latest else ""
 
     return (
@@ -1132,7 +1184,7 @@ def entry_title_html(entry: Path, is_latest: bool) -> str:
         "{badge}"
         "</div>"
     ).format(
-        href=escape(link_for(entry), quote=True),
+        href=escape(report_href(entry, root, report_base_url), quote=True),
         label=escape(label_for(entry)),
         badge=badge,
     )
@@ -1221,8 +1273,11 @@ def include_report_summary(entries: list[Path]) -> bool:
 
 
 def is_branch_index(folder: Path) -> bool:
-    suffix_parts = public_suffix_parts(folder)
-    return suffix_parts is not None and len(suffix_parts) == 1
+    return any(
+        is_report_folder(report)
+        for group in iter_entries(folder) if group.is_dir() and not group.is_symlink()
+        for report in iter_entries(group)
+    )
 
 
 def summary_compact_html(summary: ReportSummary) -> str:
@@ -1268,7 +1323,9 @@ def summary_compact_html(summary: ReportSummary) -> str:
     )
 
 
-def report_summary_cells(entry: Path) -> list[str]:
+def report_summary_cells(
+    entry: Path, root: Path | None = None, report_base_url: str = "",
+) -> list[str]:
     summary = read_report_summary(entry) if is_report_folder(entry) else None
 
     if summary is None:
@@ -1280,7 +1337,7 @@ def report_summary_cells(entry: Path) -> list[str]:
         if issues:
             suffix = "#categories"
             counts = '<a href="{href}">{inner}</a>'.format(
-                href=escape(link_for(entry) + suffix, quote=True),
+                href=escape(report_href(entry, root, report_base_url) + suffix, quote=True),
                 inner=inner,
             )
         else:
@@ -1305,9 +1362,11 @@ def entry_row(
     latest_report: Path | None,
     show_report_summary: bool,
     show_branch_navigation: bool,
+    root: Path | None = None,
+    report_base_url: str = "",
 ) -> list[str]:
-    title = entry_title_html(entry, latest_report == entry)
-    summary_cells = report_summary_cells(entry) if show_report_summary else []
+    title = entry_title_html(entry, latest_report == entry, root, report_base_url)
+    summary_cells = report_summary_cells(entry, root, report_base_url) if show_report_summary else []
     primary_cells = (
         branch_entry_cells(folder, entry)
         if show_branch_navigation
@@ -1381,8 +1440,10 @@ def generator_footer_html() -> str:
     ).format(text=" ".join(parts))
 
 
-def build_index_html(folder: Path, entries: list[Path]) -> str:
-    title = display_path(folder)
+def build_index_html(
+    folder: Path, entries: list[Path], *, root: Path | None = None, report_base_url: str = "",
+) -> str:
+    title = display_path(folder, root)
     desktop_batch_size, mobile_batch_size = configured_list_batch_sizes()
     latest_report = latest_report_for(folder)
     show_report_summary = include_report_summary(entries)
@@ -1413,6 +1474,8 @@ def build_index_html(folder: Path, entries: list[Path]) -> str:
                     latest_report,
                     show_report_summary,
                     show_branch_navigation,
+                    root,
+                    report_base_url,
                 )
             )
     else:
@@ -1436,10 +1499,10 @@ def build_index_html(folder: Path, entries: list[Path]) -> str:
 <body>
     <main>
         <div class="page-header">
-            {breadcrumb_html(folder)}
+            {breadcrumb_html(folder, root)}
             <button class="theme-toggle" type="button" aria-label="Switch theme" title="Switch theme">Theme</button>
         </div>
-{root_intro_html(folder)}
+{root_intro_html(folder, root)}
         <table class="index-table {table_mode_class}" data-progressive-list>
             <thead>
                 <tr>
@@ -1465,25 +1528,35 @@ def build_index_html(folder: Path, entries: list[Path]) -> str:
 """
 
 
-def index_folder(folder: str | Path) -> Path:
+def index_folder(
+    folder: str | Path, *, root: Path | None = None,
+    output_dir: Path | None = None, report_base_url: str = "",
+) -> Path:
     path = Path(folder)
     path.mkdir(parents=True, exist_ok=True)
 
     print(f"Indexing: {path.as_posix()}/")
 
-    index_path = path / INDEX_FILENAME
-    index_path.write_text(build_index_html(path, iter_entries(path)), encoding="utf-8")
+    destination = output_dir / path.relative_to(root) if output_dir is not None else path
+    destination.mkdir(parents=True, exist_ok=True)
+    index_path = destination / INDEX_FILENAME
+    index_path.write_text(build_index_html(path, iter_entries(path), root=root,
+                                         report_base_url=report_base_url), encoding="utf-8")
 
-    generate_latest_alias(path)
+    generate_latest_alias(path, output_folder=destination, root=root,
+                          report_base_url=report_base_url)
 
     return index_path
 
 
-def index_tree(root: str | Path) -> list[Path]:
+def index_tree(
+    root: str | Path, *, output_dir: Path | None = None, report_base_url: str = "",
+) -> list[Path]:
     path = Path(root)
     path.mkdir(parents=True, exist_ok=True)
 
-    return [index_folder(folder) for folder in iter_index_folders(path)]
+    return [index_folder(folder, root=path, output_dir=output_dir,
+                         report_base_url=report_base_url) for folder in iter_index_folders(path)]
 
 
 def main(argv: list[str]) -> int:

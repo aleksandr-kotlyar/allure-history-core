@@ -8,7 +8,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from prune_reports import DEFAULT_REPORTS_TO_KEEP, prune_reports
 from smoke_public_pages import (
@@ -225,6 +225,37 @@ def smoke(args: argparse.Namespace) -> int:
     return 0
 
 
+def http_base_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if (parsed.scheme not in {"http", "https"} or not parsed.netloc
+            or parsed.username or parsed.password or parsed.query or parsed.fragment
+            or any(ord(char) < 32 for char in value)):
+        raise ValueError("Report base URL must be HTTP(S), without credentials, query or fragment")
+    return value.rstrip("/")
+
+
+def index_reports(args: argparse.Namespace) -> int:
+    import generate_index
+
+    source = Path(args.public_dir).resolve()
+    output = Path(args.output_dir).resolve()
+    base_url = http_base_url(args.report_base_url)
+    if not source.is_dir() or generate_index.is_report_folder(source):
+        raise ValueError("--public-dir must be a navigation root, not an Allure report")
+    if output.is_relative_to(source) or source.is_relative_to(output):
+        raise ValueError("--output-dir must be separate from the source tree")
+    if output.exists() and any(output.iterdir()):
+        raise ValueError("--output-dir must be empty")
+
+    previous_title = generate_index.PUBLIC_TITLE
+    try:
+        generate_index.PUBLIC_TITLE = args.public_title
+        generate_index.index_tree(source, output_dir=output, report_base_url=base_url)
+    finally:
+        generate_index.PUBLIC_TITLE = previous_title
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
         description="Build and verify static Allure report history."
@@ -265,6 +296,13 @@ def parser() -> argparse.ArgumentParser:
     build.add_argument("--generator-version-url", default="")
     build.add_argument("--output-file")
     build.set_defaults(handler=build_report)
+
+    index = commands.add_parser("index", help="Preview navigation for existing reports; never modifies the source.")
+    index.add_argument("--public-dir", required=True)
+    index.add_argument("--output-dir", required=True)
+    index.add_argument("--report-base-url", required=True)
+    index.add_argument("--public-title", default=os.environ.get("ALLURE_HISTORY_PUBLIC_TITLE", "allure-history"))
+    index.set_defaults(handler=index_reports)
 
     smoke_parser = commands.add_parser(
         "smoke",

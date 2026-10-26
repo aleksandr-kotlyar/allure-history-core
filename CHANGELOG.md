@@ -4,6 +4,9 @@
 
 ### Added
 
+- Read-only navigation previews for existing report trees, timestamp snapshots,
+  explicit navigation roots, and an optional project intro.
+- S3 metadata-only indexing, conditional publication plans, backups, and rollback.
 - GitHub adapter and CLI for persistent report history, pull request comments,
   fork-aware Pages URLs, and GitHub Action outputs.
 - GitHub runtime build, real Allure report smoke check, and GHCR publishing.
