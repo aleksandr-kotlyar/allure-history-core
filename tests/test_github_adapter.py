@@ -363,7 +363,7 @@ def test_comment_pr_updates_existing_marker_comment(tmp_path, monkeypatch):
                     f"{github_adapter.PR_MARKER}\n"
                     "> [!TIP]\n"
                     "> **PASSED** - [Allure report]"
-                    "(https://example.github.io/project/dev/branch/job_123/#categories) - 1 total"
+                    "(https://example.github.io/project/dev/branch/job_123/) - 1 total"
                 )
             },
         ),

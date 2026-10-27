@@ -484,7 +484,7 @@ def render_comment_body(url: str, statistic: dict[str, int]) -> str:
     return (
         f"{PR_MARKER}\n"
         "> [!TIP]\n"
-        f"> **PASSED** - [Allure report]({categories_url}) - {total} total"
+        f"> **PASSED** - [Allure report]({url}) - {total} total"
     )
 
 

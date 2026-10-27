@@ -351,7 +351,7 @@ def test_render_comment_body_uses_tip_alert_for_passed_reports():
         "> [!tip]\n"
         "> \U0001f7e2 **PASSED** \u00b7 "
         "[Allure report]"
-        "(https://example.gitlab.io/project/dev/branch/job_123/#categories) "
+        "(https://example.gitlab.io/project/dev/branch/job_123/) "
         "\u00b7 44 total"
     )
 

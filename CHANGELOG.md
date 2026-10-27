@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- GitLab MR and GitHub PR comments open the report overview when there are no
+  failed or broken tests, and the categories page when either count is positive.
+
 ### Added
 
 - Full S3 report publication for GitLab and GitHub, including history restoration,

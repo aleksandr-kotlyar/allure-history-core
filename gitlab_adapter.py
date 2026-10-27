@@ -488,7 +488,7 @@ def render_comment_body(url: str, statistic: dict[str, int]) -> str:
     return (
         "> [!tip]\n"
         "> \U0001f7e2 **PASSED** \u00b7 "
-        f"[Allure report]({categories_url}) \u00b7 {total} total"
+        f"[Allure report]({url}) \u00b7 {total} total"
     )
 
 
