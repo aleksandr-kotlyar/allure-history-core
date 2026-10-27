@@ -31,6 +31,13 @@ def test_prune_reports_ignores_missing_path(tmp_path):
     assert removed == 0
 
 
+def test_retention_is_deterministic_when_numeric_ids_are_equal_or_absent(tmp_path):
+    for report_id in ("zulu", "alpha", "1", "01"):
+        create_report(tmp_path, report_id)
+    assert prune_reports(tmp_path, keep=1) == 3
+    assert [entry.name for entry in tmp_path.iterdir()] == ["job_1"]
+
+
 def test_prune_reports_keeps_latest_alias(tmp_path):
     for job_id in [10, 15, 20, 25]:
         (tmp_path / f"job_{job_id}").mkdir()

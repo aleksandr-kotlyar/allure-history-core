@@ -16,6 +16,8 @@ from uuid import uuid4
 
 from allure_history import http_base_url, index_reports
 import generate_index as gui
+from report_paths import path_segment, report_group_path
+from s3_tree import inventory, navigation_metadata, relative_key, SparseTree
 
 
 LOCK_NAME = ".allure-history-index.lock"
@@ -24,12 +26,10 @@ BACKUP_HEADERS = ("ContentType", "CacheControl", "ContentEncoding", "ContentDisp
                   "ContentLanguage", "Metadata", "WebsiteRedirectLocation")
 
 
-def relative_key(key: str) -> str:
-    parts = key.split("/")
-    if (not key or any(part in {"", ".", ".."} for part in parts)
-            or "\\" in key or any(ord(char) < 32 for char in key)):
-        raise ValueError(f"Unsafe relative object key: {key!r}")
-    return key
+def navigation_headers(key: str) -> dict:
+    if PurePosixPath(key).name == gui.NAVIGATION_METADATA_FILENAME:
+        return {"ContentType": "application/json", "CacheControl": "no-cache"}
+    return HTML_HEADERS
 
 
 def storage_location(uri: str) -> tuple[str, str]:
@@ -45,16 +45,6 @@ def storage_location(uri: str) -> tuple[str, str]:
     elif parsed.path not in {"", "/"}:
         raise ValueError("--s3-uri must not contain empty path segments")
     return parsed.netloc, prefix + "/" if prefix else ""
-
-
-def inventory(client, bucket: str, prefix: str) -> dict:
-    objects = {}
-    for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix):
-        for item in page.get("Contents", []):
-            key = item["Key"][len(prefix):]
-            if key and not key.endswith("/") and key != LOCK_NAME:
-                objects[relative_key(key)] = item
-    return objects
 
 
 def validate_navigation_root(prefix: str, objects: dict) -> None:
@@ -166,8 +156,11 @@ def prepare(args, client) -> Path:
         if intro is None:
             os.environ.pop(gui.SHOW_INTRO_ENV, None)
 
+    for folder in gui.iter_index_folders(output / "source"):
+        relative = folder.relative_to(output / "source") / gui.NAVIGATION_METADATA_FILENAME
+        (output / "public" / relative).write_bytes(navigation_metadata(folder))
     navigation = sorted(path.relative_to(output / "public").as_posix()
-                        for path in (output / "public").rglob("*.html"))
+                        for path in (output / "public").rglob("*") if path.is_file())
     operations = []
     for key in navigation:
         data = (output / "public" / key).read_bytes()
@@ -177,7 +170,7 @@ def prepare(args, client) -> Path:
             if response["ETag"] != objects[key]["ETag"]:
                 raise RuntimeError("Navigation changed while preparing; create a new plan")
             headers = {name: response[name] for name in BACKUP_HEADERS if name in response}
-            if body == data and all(headers.get(k) == v for k, v in HTML_HEADERS.items()):
+            if body == data and all(headers.get(k) == v for k, v in navigation_headers(key).items()):
                 continue
             backup = output / "backup" / key
             backup.parent.mkdir(parents=True, exist_ok=True)
@@ -204,7 +197,8 @@ def load_plan(path: Path) -> dict:
     for entry in plan["operations"]:
         key = relative_key(entry["key"])
         parts = PurePosixPath(key).parts
-        if (parts[-1] != "index.html" or any(p in {"history", ".history"} for p in parts)
+        if (parts[-1] not in {"index.html", gui.NAVIGATION_METADATA_FILENAME}
+                or any(p in {"history", ".history"} for p in parts)
                 or any(parent.as_posix() in reports for parent in PurePosixPath(key).parents)):
             raise ValueError(f"Plan would modify a report or history: {key}")
         for directory, expected in (("public", entry["sha256"]),
@@ -236,7 +230,7 @@ def rollback_targets(plan: dict, client, bucket: str, prefix: str, objects: dict
             targets[key] = None
         elif (digest == entry["sha256"]
               and (not entry.get("published_etag") or response["ETag"] == entry["published_etag"])
-              and all(response.get(name) == HTML_HEADERS.get(name)
+              and all(response.get(name) == navigation_headers(key).get(name)
                       for name in BACKUP_HEADERS if name != "Metadata")
               and not response.get("Metadata")):
             targets[key] = response["ETag"]
@@ -295,7 +289,7 @@ def apply_plan(path: Path, client, *, rollback: bool = False) -> None:
                 condition = {"IfMatch": entry["previous"]["etag"]} if entry["previous"] else {"IfNoneMatch": "*"}
                 response = client.put_object(Bucket=bucket, Key=prefix + key,
                                              Body=(path.parent / "public" / key).read_bytes(),
-                                             **HTML_HEADERS, **condition)
+                                             **navigation_headers(key), **condition)
                 entry["published_etag"] = response["ETag"]
             save_plan(path, plan)
         plan["state"] = "rolled-back" if rollback else "published"
@@ -321,7 +315,8 @@ def publish_job(args, client) -> None:
     if not prefix:
         raise ValueError("Report publication requires a dedicated, non-root S3 prefix")
     public_url = http_base_url(args.public_url)
-    if int(provider.env_or("REPORTS_TO_KEEP", "30")) < 1:
+    keep = int(provider.env_or("REPORTS_TO_KEEP", "30"))
+    if keep < 1:
         raise ValueError("REPORTS_TO_KEEP must be positive for report publication")
     provider.validate_runtime_commands()
     provider.ensure_results_present()
@@ -330,6 +325,9 @@ def publish_job(args, client) -> None:
         raise ValueError("--public-dir must be empty; use a clean report workspace")
     public.mkdir(parents=True, exist_ok=True)
     config = TransferConfig(use_threads=False)
+    group = report_group_path(os.environ.get("ALLURE_HISTORY_GROUP_PATH", ""),
+                              provider.report_env(), provider.report_branch())
+    report_name = "job_" + path_segment(provider.job_id(), "report ID")
 
     def download(key):
         destination = public / key
@@ -344,29 +342,44 @@ def publish_job(args, client) -> None:
             headers["ContentEncoding"] = encoding
         if path.suffix == ".html":
             headers.update(HTML_HEADERS)
+        elif path.name == gui.NAVIGATION_METADATA_FILENAME:
+            headers.update(navigation_headers(key))
         client.upload_file(str(path), bucket, prefix + key, ExtraArgs=headers, Config=config)
 
     with publish_lock(client, bucket, prefix):
-        objects = inventory(client, bucket, prefix)
-        validate_navigation_root(prefix, objects)
-        # shortcut: restore the full owned prefix; hydrate metadata only if storage size makes this costly.
-        transfer_files(download, objects)
+        tree = SparseTree(client, bucket, prefix, public, group, report_name, keep)
+        tree.restore()
+        # Recursive listings are limited to data we replace or explicitly expire.
+        scopes = [(group / "history").as_posix(), (group / report_name).as_posix()]
+        scopes.extend((group / name).as_posix() for name in sorted(tree.expired))
+        previous = {scope: inventory(client, bucket, prefix + scope + "/", include_markers=True)
+                    for scope in scopes}
+        history_scope = (group / "history").as_posix()
+        transfer_files(download, (history_scope + "/" + key for key in previous[history_scope]
+                                  if key and not key.endswith("/")))
         previous_intro = os.environ.get(gui.SHOW_INTRO_ENV)
         previous_title = gui.PUBLIC_TITLE
         try:
             os.environ.setdefault(gui.SHOW_INTRO_ENV, "false")
             gui.PUBLIC_TITLE = args.public_title
-            provider.build_report(public_dir=public, base_url=public_url, public_title=args.public_title)
+            provider.build_report(public_dir=public, base_url=public_url,
+                                  public_title=args.public_title, skip_index=True)
+            for folder in sorted(tree.force, key=lambda value: len(value.parts), reverse=True):
+                gui.index_folder(public / folder, root=public)
+            metadata = tree.write_metadata()
         finally:
             gui.PUBLIC_TITLE = previous_title
             if previous_intro is None:
                 os.environ.pop(gui.SHOW_INTRO_ENV, None)
         result = json.loads(provider.output_file_path().read_text(encoding="utf-8"))
         snapshot = Path(result["snapshot_dir"])
-        if not snapshot.is_relative_to(public) or not (snapshot / "index.html").is_file():
+        if snapshot != public / group / report_name or not (snapshot / "index.html").is_file():
             raise RuntimeError("Core did not produce a report inside the public tree")
-        if fingerprint(inventory(client, bucket, prefix), []) != fingerprint(objects, []):
-            raise RuntimeError("S3 tree changed during generation; refusing to publish")
+        tree.check_unchanged()
+        for scope, objects in previous.items():
+            current = inventory(client, bucket, prefix + scope + "/", include_markers=True)
+            if fingerprint(current, []) != fingerprint(objects, []):
+                raise RuntimeError("S3 report/history changed during generation; refusing to publish")
 
         # Publish report assets before its entry page, and prune only after navigation succeeds.
         transfer_files(upload, (path for path in snapshot.rglob("*")
@@ -375,15 +388,24 @@ def publish_job(args, client) -> None:
         history = snapshot.parent / "history"
         transfer_files(upload, (path for path in history.rglob("*") if path.is_file()))
         navigation = set()
-        for folder in gui.iter_index_folders(public):
+        for relative in tree.force:
+            folder = public / relative
             for name in ("index.html", "latest/index.html", ".modified_at"):
                 path = folder / name
                 if path.is_file():
                     navigation.add(path)
         transfer_files(upload, sorted(navigation))
-        current = {path.relative_to(public).as_posix() for path in public.rglob("*") if path.is_file()}
-        for key in sorted(objects.keys() - current):
-            client.delete_object(Bucket=bucket, Key=prefix + key, IfMatch=objects[key]["ETag"])
+        transfer_files(upload, metadata)
+
+        def delete(item):
+            key, etag = item
+            client.delete_object(Bucket=bucket, Key=prefix + key, IfMatch=etag)
+
+        for scope, objects in previous.items():
+            current = {path.relative_to(public / scope).as_posix()
+                       for path in (public / scope).rglob("*") if path.is_file()}
+            transfer_files(delete, ((scope + "/" + key, objects[key]["ETag"])
+                                    for key in sorted(objects.keys() - current)))
 
     if args.provider == "github":
         provider.write_outputs(public)
@@ -396,11 +418,13 @@ def publish_job(args, client) -> None:
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__)
     commands = root.add_subparsers(dest="command", required=True)
-    index = commands.add_parser("index", help="Read S3 metadata and prepare a local preview and rollback plan")
-    index.add_argument("--s3-uri", required=True)
-    index.add_argument("--public-url", required=True)
-    index.add_argument("--output-dir", required=True)
-    index.add_argument("--public-title", default=os.environ.get("ALLURE_HISTORY_PUBLIC_TITLE", "allure-history"))
+    for name, help_text in (("index", "Prepare a navigation preview and rollback plan"),
+                            ("refresh-gui", "Explicitly refresh GUI across the selected archive")):
+        index = commands.add_parser(name, help=help_text)
+        index.add_argument("--s3-uri", required=True)
+        index.add_argument("--public-url", required=True)
+        index.add_argument("--output-dir", required=True)
+        index.add_argument("--public-title", default=os.environ.get("ALLURE_HISTORY_PUBLIC_TITLE", "allure-history"))
     job = commands.add_parser("publish-job", help="Restore, generate, retain and publish reports using S3 storage")
     job.add_argument("--provider", choices=("gitlab", "github"), required=True)
     job.add_argument("--s3-uri", required=True)
@@ -420,8 +444,10 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         client = boto3.client("s3")
-        if args.command == "index":
-            prepare(args, client)
+        if args.command in {"index", "refresh-gui"}:
+            plan = prepare(args, client)
+            if args.command == "refresh-gui":
+                apply_plan(plan, client)
         elif args.command == "publish-job":
             publish_job(args, client)
         else:

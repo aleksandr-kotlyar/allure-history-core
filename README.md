@@ -155,11 +155,11 @@ default to visible in the legacy Pages flow. License notices remain in source.
 ## Publishing reports to S3
 
 `publish-job` uses S3 as the persistent backend for the complete report cycle:
-restore the tree/history, generate a new report through Core, apply per-group
-retention, upload the report and history, refresh navigation, then prune old
-objects. GitLab/GitHub metadata, optional MR/PR comments, and GitHub outputs
-come from the same CI adapters as the git-backed publisher. No storage branch,
-Git push token, or Pages deployment is needed.
+restore the current group's history, generate a new report through Core, apply
+per-group retention, upload the report/history, update navigation along that
+group's path, then prune expired reports. GitLab/GitHub metadata, optional MR/PR
+comments, and GitHub outputs come from the same CI adapters as the git-backed
+publisher. No storage branch, Git push token, or Pages deployment is needed.
 
 ```bash
 ALLURE_HISTORY_GROUP_PATH="$QA_ENV/$CI_PROJECT_NAME/$NAMESPACE" \
@@ -177,13 +177,29 @@ is hidden unless `ALLURE_HISTORY_SHOW_INTRO=true`. `--public-url` describes the
 report origin, independently of the API endpoint or Pages. GitLab comments read
 the actual report URL from Core output, so `CI_PAGES_URL` is not required here.
 
-The default local tree is `allure-s3/public`; it must be empty before publication.
-This implementation restores the full owned prefix, with bounded parallel
-transfers, so large archives cost download time and disk space. Existing report
-objects are not reuploaded; uploads cover the new snapshot, current group history,
-navigation, and time metadata. Content types are set for new files. Old objects
-are removed only after report and navigation uploads succeed. Retention must be
-positive. Changing `group-path` creates a new group and preserves existing groups.
+The default workspace is `allure-s3/public`; it must be empty before publication.
+It contains the new report, current history and a sparse navigation tree, rather
+than a complete copy suitable for deployment elsewhere. Existing report HTML and
+attachments stay in S3. Listings use `Delimiter=/`; recursive object listings are
+limited to the current history, the snapshot being retried and expired snapshots.
+Only those explicit scopes can have obsolete objects deleted, including folder
+markers. Retained reports and unrelated files are preserved.
+
+Each navigation folder has a small `.allure-history-navigation.json` file with
+its latest report path and time. Publications list the current group and its
+ancestors live, and read these pointers for neighbouring subtrees. A legacy
+subtree without pointers is discovered once through folder listings and report
+summaries/time metadata; its GUI is left untouched and subsequent jobs reuse the
+pointers. An initial run against a large legacy archive therefore reads its
+navigation metadata, but never its report bodies or attachments.
+
+Uploads use bounded parallel transfers and cover the new snapshot, current group
+history, navigation/time metadata along the updated path, and newly discovered
+navigation pointers. Neighbouring GUI pages are never republished automatically.
+Content types are set for new files. Expired data is removed only after all these
+uploads succeed. Retention must be positive and sorts job IDs numerically (ties
+by folder name). A new ID outside that retention window is rejected before
+generation. Changing `group-path` creates a new group and preserves existing groups.
 
 Publication requires a **dedicated non-root prefix**, exclusively owned by this
 tree. Do not choose a prefix containing unrelated storage, or use overlapping
@@ -203,6 +219,22 @@ or retention deletions.
 The GitLab `allure-history-s3` component and GitHub `s3` action expose this flow.
 The separate `allure-history-s3-index` component and `s3-index` action manage
 navigation for reports produced elsewhere.
+
+Refresh GUI throughout an existing archive explicitly, for example after changing
+its appearance or importing reports outside the publisher:
+
+```bash
+allure-history-s3-refresh-gui \
+  --s3-uri s3://reports/team/project \
+  --public-url https://reports.example.test/team/project \
+  --output-dir allure-gui-refresh
+```
+
+This separate script prepares and publishes all navigation HTML and latest-report
+pointers, without transferring report bodies or history. It keeps a preview,
+exact plan and backups in `allure-gui-refresh`; retain the entire directory for
+`allure-history-s3 rollback --plan allure-gui-refresh/plan.json`. For preview and
+review before writing, use the separate `index` and `publish` commands below.
 
 ## Existing reports in S3
 
@@ -267,9 +299,9 @@ allure-history-s3 rollback --plan allure-navigation/plan.json
 ```
 
 Publication validates that the listed source and previous indexes have not
-changed since preview, then uses conditional writes for only the planned HTML
-objects. Each successful operation is recorded locally. A shared prefix lock
-serialises publishers, including different CI jobs/projects using that scope.
+changed since preview, then uses conditional writes for only the planned HTML and
+latest-report pointers. Each successful operation is recorded locally. A shared
+prefix lock serialises publishers, including different CI jobs/projects using that scope.
 Changed sources require a new preview; conflicts are never overwritten blindly.
 New HTML uses `text/html; charset=utf-8` and `Cache-Control: no-cache`.
 

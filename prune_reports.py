@@ -25,7 +25,8 @@ def prune_reports(path, keep=DEFAULT_REPORTS_TO_KEEP):
             for child in reports_dir.iterdir()
             if child.is_dir() and child.name.startswith("job_")
         ),
-        key=job_id,
+        # Stable ties let storage adapters plan the same retention remotely.
+        key=lambda report: (job_id(report), report.name),
     )
     reports_to_delete = job_reports[:-keep] if keep > 0 else job_reports
 

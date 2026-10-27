@@ -250,7 +250,8 @@ def prepare_pages_worktree() -> None:
     )
 
 
-def build_report(*, public_dir: Path | None = None, base_url: str = "", public_title: str = "") -> None:
+def build_report(*, public_dir: Path | None = None, base_url: str = "", public_title: str = "",
+                 skip_index: bool = False) -> None:
     validate_runtime_commands()
     ensure_results_present()
 
@@ -311,6 +312,8 @@ def build_report(*, public_dir: Path | None = None, base_url: str = "", public_t
         command.extend(["--generator-version-url", version_url])
     if group_path:
         command.extend(["--group-path", group_path])
+    if skip_index:
+        command.append("--skip-index")
 
     run_command(command)
 

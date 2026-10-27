@@ -269,7 +269,8 @@ def prepare_pages_worktree() -> None:
     )
 
 
-def build_report(*, public_dir: Path | None = None, base_url: str = "", public_title: str = "") -> None:
+def build_report(*, public_dir: Path | None = None, base_url: str = "", public_title: str = "",
+                 skip_index: bool = False) -> None:
     validate_runtime_commands()
     jid = job_id()
     env_name = report_env()
@@ -328,7 +329,7 @@ def build_report(*, public_dir: Path | None = None, base_url: str = "", public_t
             "--output-file",
             str(output_file_path()),
         ]
-        + group_args
+        + group_args + (["--skip-index"] if skip_index else [])
     )
 
 

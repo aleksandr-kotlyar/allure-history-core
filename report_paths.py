@@ -16,7 +16,8 @@ def report_group_path(value: str, environment: str, branch: str) -> Path:
     ]
     for part in parts:
         path_segment(part, "--group-path")
-        if (part in {"history", ".history", "latest", "index.html", ".modified_at", "data", "widgets"}
+        if (part in {"history", ".history", "latest", "index.html", ".modified_at", "data", "widgets",
+                     ".allure-history-navigation.json"}
                 or part.startswith("job_")
                 or re.fullmatch(r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}", part)):
             raise ValueError(f"--group-path contains a reserved report name: {part}")

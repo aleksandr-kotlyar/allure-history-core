@@ -21,6 +21,7 @@ class MemoryS3:
         self.objects = {}
         self.reads = []
         self.writes = []
+        self.listings = []
         self.fail_key = None
         self.fail_after_write = False
 
@@ -33,18 +34,43 @@ class MemoryS3:
         assert name == "list_objects_v2"
         return self
 
-    def paginate(self, *, Bucket, Prefix):
+    def paginate(self, *, Bucket, Prefix, Delimiter=None):
         assert Bucket == "reports"
+        self.listings.append((Prefix, Delimiter))
         items = [{"Key": key, **{k: v for k, v in value.items() if k != "body"}}
                  for key, value in sorted(self.objects.items()) if key.startswith(Prefix)]
-        for offset in range(0, len(items), 2):
-            yield {"Contents": items[offset:offset + 2]}
+        entries = []
+        folders = set()
+        for item in items:
+            suffix = item["Key"][len(Prefix):]
+            if Delimiter and Delimiter in suffix:
+                folders.add(Prefix + suffix.split(Delimiter, 1)[0] + Delimiter)
+            else:
+                entries.append(("Contents", item))
+        entries.extend(("CommonPrefixes", {"Prefix": name}) for name in sorted(folders))
+        for offset in range(0, len(entries), 2):
+            page = {}
+            for kind, item in entries[offset:offset + 2]:
+                page.setdefault(kind, []).append(item)
+            yield page
 
     def get_object(self, *, Bucket, Key):
         assert Bucket == "reports"
         self.reads.append(Key)
+        self.require_object(Key)
         item = self.objects[Key]
         return {**{k: v for k, v in item.items() if k != "body"}, "Body": BytesIO(item["body"])}
+
+    def require_object(self, key):
+        if key not in self.objects:
+            raise ClientError({"Error": {"Code": "NoSuchKey"},
+                               "ResponseMetadata": {"HTTPStatusCode": 404}}, "GetObject")
+
+    def head_object(self, *, Bucket, Key, IfMatch=None):
+        assert Bucket == "reports"
+        self.require_object(Key)
+        self.check_condition(Key, IfMatch=IfMatch)
+        return {k: v for k, v in self.objects[Key].items() if k != "body"}
 
     def check_condition(self, Key, IfMatch=None, IfNoneMatch=None):
         item = self.objects.get(Key)

@@ -185,7 +185,8 @@ def build_report(args: argparse.Namespace) -> int:
 
     from generate_index import index_tree
 
-    index_tree(public_dir)
+    if not args.skip_index:
+        index_tree(public_dir)
 
     result = {
         "report_id": report_id,
@@ -281,6 +282,7 @@ def parser() -> argparse.ArgumentParser:
     build.add_argument("--build-name", required=True)
     build.add_argument("--modified-at", default="")
     build.add_argument("--reports-to-keep", type=int, default=DEFAULT_REPORTS_TO_KEEP)
+    build.add_argument("--skip-index", action="store_true", help="Let the storage adapter update navigation.")
     build.add_argument("--allure-command", default="allure")
     build.add_argument("--public-title", default="allure-history")
     build.add_argument("--publisher-title", default="Allure History Publisher")
