@@ -12,6 +12,7 @@ from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 from allure_history import slug, utc_timestamp
+from report_paths import public_report_url, report_group_path
 
 
 PAGES_WORKTREE = Path("pages-worktree")
@@ -249,7 +250,7 @@ def prepare_pages_worktree() -> None:
     )
 
 
-def build_report() -> None:
+def build_report(*, public_dir: Path | None = None, base_url: str = "", public_title: str = "") -> None:
     validate_runtime_commands()
     ensure_results_present()
 
@@ -258,8 +259,10 @@ def build_report() -> None:
     branch = report_branch()
     stamp = utc_timestamp()
 
+    group_path = os.environ.get("ALLURE_HISTORY_GROUP_PATH", "")
+    group = report_group_path(group_path, env_name, branch)
     print(
-        f"Building Allure report for environment '{env_name}', branch '{branch}', run '{jid}'."
+        f"Building Allure report for group '{group.as_posix()}', run '{jid}'."
     )
     command = [
         "allure-history",
@@ -267,7 +270,7 @@ def build_report() -> None:
         "--results-dir",
         str(results_dir_path()),
         "--public-dir",
-        str(public_dir_path()),
+        str(public_dir if public_dir is not None else public_dir_path()),
         "--environment",
         env_name,
         "--branch",
@@ -275,7 +278,7 @@ def build_report() -> None:
         "--report-id",
         jid,
         "--pages-base-url",
-        pages_base_url(),
+        base_url or pages_base_url(),
         "--ci-name",
         "GitHub Actions",
         "--ci-type",
@@ -289,7 +292,7 @@ def build_report() -> None:
         "--reports-to-keep",
         env_or("REPORTS_TO_KEEP", "30"),
         "--public-title",
-        "allure-history-github",
+        public_title or "allure-history-github",
         "--publisher-title",
         "Allure History GitHub",
         "--pages-name",
@@ -306,6 +309,8 @@ def build_report() -> None:
     version_url = generator_version_url()
     if version_url:
         command.extend(["--generator-version-url", version_url])
+    if group_path:
+        command.extend(["--group-path", group_path])
 
     run_command(command)
 
@@ -410,11 +415,10 @@ def report_url() -> str:
     if isinstance(value, str) and value:
         return value
 
-    return "{}/{}/{}/{}/".format(
-        pages_base_url().rstrip("/"),
-        quote(report_env(), safe=""),
-        quote(report_branch(), safe=""),
-        quote(report_dir_name(), safe=""),
+    return public_report_url(
+        pages_base_url(),
+        report_group_path(os.environ.get("ALLURE_HISTORY_GROUP_PATH", ""), report_env(), report_branch()),
+        report_dir_name(),
     )
 
 
@@ -423,7 +427,8 @@ def summary_path() -> Path:
     value = data.get("snapshot_dir")
     if isinstance(value, str) and value:
         return Path(value) / "widgets" / "summary.json"
-    return public_dir_path() / report_env() / report_branch() / report_dir_name() / "widgets" / "summary.json"
+    group = report_group_path(os.environ.get("ALLURE_HISTORY_GROUP_PATH", ""), report_env(), report_branch())
+    return public_dir_path() / group / report_dir_name() / "widgets" / "summary.json"
 
 
 def load_summary_statistic(path: Path) -> dict[str, int]:
@@ -584,6 +589,16 @@ def comment_pr() -> None:
         raise RuntimeError(f"Failed to create GitHub PR comment (HTTP {status:03d})")
 
 
+def write_outputs(public_dir: Path = PUBLIC_DIR) -> None:
+    output = os.environ.get("GITHUB_OUTPUT", "")
+    if output:
+        url = report_url()
+        if "\n" in url or "\r" in url:
+            raise RuntimeError("Report URL must be a single line")
+        with Path(output).open("a", encoding="utf-8") as stream:
+            stream.write(f"report-url={url}\npublic-dir={public_dir}\n")
+
+
 def publish_job() -> None:
     print("Starting GitHub Allure History publish job.")
     validate_runtime_commands()
@@ -591,13 +606,7 @@ def publish_job() -> None:
     prepare_pages_worktree()
     build_report()
     publish_pages_worktree()
-    output = os.environ.get("GITHUB_OUTPUT", "")
-    if output:
-        url = report_url()
-        if "\n" in url or "\r" in url:
-            raise RuntimeError("Report URL must be a single line")
-        with Path(output).open("a", encoding="utf-8") as stream:
-            stream.write(f"report-url={url}\npublic-dir={PUBLIC_DIR}\n")
+    write_outputs()
     comment_pr()
 
 

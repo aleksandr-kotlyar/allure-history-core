@@ -8,24 +8,22 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from report_paths import report_group_path
+
 
 DEFAULT_ATTEMPTS = 12
 DEFAULT_DELAY_SECONDS = 5.0
 USER_AGENT = "allure-history-core-pages-smoke"
 
 
-def public_page_urls(base_url: str, environment: str, branch: str, report: str):
+def public_page_urls(base_url: str, environment: str, branch: str, report: str, *, group_path: str = ""):
     base_url = base_url.rstrip("/")
-    path_parts = [quote(part, safe="") for part in (environment, branch)]
-    environment_url = f"{base_url}/{path_parts[0]}/"
-    branch_url = f"{environment_url}{path_parts[1]}/"
-
-    return (
-        environment_url,
-        branch_url,
-        f"{branch_url}latest/",
-        f"{branch_url}{quote(report, safe='')}/",
-    )
+    group = report_group_path(group_path, environment, branch)
+    urls = []
+    for part in group.parts:
+        base_url += f"/{quote(part, safe='')}"
+        urls.append(base_url + "/")
+    return (*urls, f"{base_url}/latest/", f"{base_url}/{quote(report, safe='')}/")
 
 
 def fetch_page(url: str) -> tuple[int, str]:
@@ -81,8 +79,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         description="Verify published static Pages navigation and report URLs."
     )
     parser.add_argument("--base-url", required=True)
-    parser.add_argument("--environment", required=True)
-    parser.add_argument("--branch", required=True)
+    parser.add_argument("--environment", default="")
+    parser.add_argument("--branch", default="")
+    parser.add_argument("--group-path", default="")
     parser.add_argument("--report", required=True)
     parser.add_argument("--attempts", type=int, default=DEFAULT_ATTEMPTS)
     parser.add_argument("--delay-seconds", type=float, default=DEFAULT_DELAY_SECONDS)
@@ -100,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
         args.environment,
         args.branch,
         args.report,
+        group_path=args.group_path,
     )
     wait_for_public_pages(
         urls,

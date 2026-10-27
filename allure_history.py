@@ -8,21 +8,16 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import urlsplit
 
 from prune_reports import DEFAULT_REPORTS_TO_KEEP, prune_reports
+from report_paths import path_segment, public_report_url, report_group_path
 from smoke_public_pages import (
     DEFAULT_ATTEMPTS,
     DEFAULT_DELAY_SECONDS,
     public_page_urls,
     wait_for_public_pages,
 )
-
-
-def path_segment(value: str, option: str) -> str:
-    if not value or value in {".", ".."} or "/" in value or "\\" in value:
-        raise ValueError(f"{option} must be one non-empty path segment")
-    return value
 
 
 def slug(value: str) -> str:
@@ -48,8 +43,7 @@ def write_executor(
     results_dir: Path,
     *,
     pages_base_url: str,
-    environment: str,
-    branch: str,
+    group_path: Path,
     report_name: str,
     ci_name: str,
     ci_type: str,
@@ -57,12 +51,7 @@ def write_executor(
     build_name: str,
     build_order: str,
 ) -> str:
-    report_url = "{}/{}/{}/{}/".format(
-        pages_base_url.rstrip("/"),
-        quote(environment, safe=""),
-        quote(branch, safe=""),
-        quote(report_name, safe=""),
-    )
+    report_url = public_report_url(pages_base_url, group_path, report_name)
     executor = {
         "name": ci_name,
         "type": ci_type,
@@ -112,8 +101,10 @@ def configure_branding(args: argparse.Namespace) -> None:
 
 
 def build_report(args: argparse.Namespace) -> int:
-    environment = path_segment(args.environment, "--environment")
-    branch = path_segment(args.branch, "--branch")
+    configure_branding(args)
+    from generate_index import is_indexable_folder
+
+    group_path = report_group_path(args.group_path, args.environment, args.branch)
     report_id = path_segment(args.report_id, "--report-id")
 
     results_dir = Path(args.results_dir).resolve()
@@ -121,15 +112,21 @@ def build_report(args: argparse.Namespace) -> int:
     work_dir = Path(args.work_dir).resolve()
     report_name = f"job_{report_id}"
     generated_report_dir = work_dir / report_name
-    branch_dir = public_dir / environment / branch
-    history_dir = branch_dir / "history"
+    group_dir = public_dir / group_path
+    history_dir = group_dir / "history"
+
+    current = public_dir
+    for part in group_path.parts:
+        current /= part
+        if current.is_symlink() or (current.exists() and not is_indexable_folder(current)):
+            raise ValueError(f"Report group must use directories outside existing reports: {current}")
 
     if not results_dir.is_dir() or not any(results_dir.iterdir()):
         raise RuntimeError(
             "Missing Allure results. The results directory must contain test output."
         )
 
-    branch_dir.mkdir(parents=True, exist_ok=True)
+    group_dir.mkdir(parents=True, exist_ok=True)
     results_history = results_dir / "history"
     if results_history.exists():
         shutil.rmtree(results_history)
@@ -138,13 +135,12 @@ def build_report(args: argparse.Namespace) -> int:
         shutil.copytree(history_dir, results_history)
         print(f"Restored previous Allure history from {history_dir}.")
     else:
-        print(f"No previous Allure history for '{environment}/{branch}'.")
+        print(f"No previous Allure history for '{group_path.as_posix()}'.")
 
     report_url = write_executor(
         results_dir,
         pages_base_url=args.pages_base_url,
-        environment=environment,
-        branch=branch,
+        group_path=group_path,
         report_name=report_name,
         ci_name=args.ci_name,
         ci_type=args.ci_type,
@@ -165,7 +161,7 @@ def build_report(args: argparse.Namespace) -> int:
         check=True,
     )
 
-    snapshot_dir = branch_dir / report_name
+    snapshot_dir = group_dir / report_name
     if snapshot_dir.exists():
         shutil.rmtree(snapshot_dir)
     shutil.copytree(generated_report_dir, snapshot_dir)
@@ -184,10 +180,9 @@ def build_report(args: argparse.Namespace) -> int:
     else:
         history_dir.mkdir(parents=True)
 
-    update_modified_at(branch_dir, public_dir, modified_at)
-    prune_reports(branch_dir, args.reports_to_keep)
+    update_modified_at(group_dir, public_dir, modified_at)
+    prune_reports(group_dir, args.reports_to_keep)
 
-    configure_branding(args)
     from generate_index import index_tree
 
     index_tree(public_dir)
@@ -195,6 +190,7 @@ def build_report(args: argparse.Namespace) -> int:
     result = {
         "report_id": report_id,
         "report_name": report_name,
+        "group_path": group_path.as_posix(),
         "report_url": report_url,
         "snapshot_dir": str(snapshot_dir),
     }
@@ -216,12 +212,44 @@ def smoke(args: argparse.Namespace) -> int:
         args.environment,
         args.branch,
         args.report,
+        group_path=args.group_path,
     )
     wait_for_public_pages(
         urls,
         attempts=args.attempts,
         delay_seconds=args.delay_seconds,
     )
+    return 0
+
+
+def http_base_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if (parsed.scheme not in {"http", "https"} or not parsed.netloc
+            or parsed.username or parsed.password or parsed.query or parsed.fragment
+            or any(ord(char) < 32 for char in value)):
+        raise ValueError("Report base URL must be HTTP(S), without credentials, query or fragment")
+    return value.rstrip("/")
+
+
+def index_reports(args: argparse.Namespace) -> int:
+    import generate_index
+
+    source = Path(args.public_dir).resolve()
+    output = Path(args.output_dir).resolve()
+    base_url = http_base_url(args.report_base_url)
+    if not source.is_dir() or generate_index.is_report_folder(source):
+        raise ValueError("--public-dir must be a navigation root, not an Allure report")
+    if output.is_relative_to(source) or source.is_relative_to(output):
+        raise ValueError("--output-dir must be separate from the source tree")
+    if output.exists() and any(output.iterdir()):
+        raise ValueError("--output-dir must be empty")
+
+    previous_title = generate_index.PUBLIC_TITLE
+    try:
+        generate_index.PUBLIC_TITLE = args.public_title
+        generate_index.index_tree(source, output_dir=output, report_base_url=base_url)
+    finally:
+        generate_index.PUBLIC_TITLE = previous_title
     return 0
 
 
@@ -242,8 +270,9 @@ def parser() -> argparse.ArgumentParser:
     build.add_argument("--results-dir", default="allure-results")
     build.add_argument("--public-dir", required=True)
     build.add_argument("--work-dir", default=".")
-    build.add_argument("--environment", required=True)
-    build.add_argument("--branch", required=True)
+    build.add_argument("--environment", default="")
+    build.add_argument("--branch", default="")
+    build.add_argument("--group-path", default="", help="Relative report group; defaults to environment/branch.")
     build.add_argument("--report-id", required=True)
     build.add_argument("--pages-base-url", required=True)
     build.add_argument("--ci-name", required=True)
@@ -266,13 +295,21 @@ def parser() -> argparse.ArgumentParser:
     build.add_argument("--output-file")
     build.set_defaults(handler=build_report)
 
+    index = commands.add_parser("index", help="Preview navigation for existing reports; never modifies the source.")
+    index.add_argument("--public-dir", required=True)
+    index.add_argument("--output-dir", required=True)
+    index.add_argument("--report-base-url", required=True)
+    index.add_argument("--public-title", default=os.environ.get("ALLURE_HISTORY_PUBLIC_TITLE", "allure-history"))
+    index.set_defaults(handler=index_reports)
+
     smoke_parser = commands.add_parser(
         "smoke",
         help="Wait until public report navigation and snapshot URLs are available.",
     )
     smoke_parser.add_argument("--base-url", required=True)
-    smoke_parser.add_argument("--environment", required=True)
-    smoke_parser.add_argument("--branch", required=True)
+    smoke_parser.add_argument("--environment", default="")
+    smoke_parser.add_argument("--branch", default="")
+    smoke_parser.add_argument("--group-path", default="")
     smoke_parser.add_argument("--report", required=True)
     smoke_parser.add_argument("--attempts", type=int, default=DEFAULT_ATTEMPTS)
     smoke_parser.add_argument(
